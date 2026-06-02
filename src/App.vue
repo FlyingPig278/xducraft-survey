@@ -41,7 +41,7 @@ import type {
 
 type AdminPanelKey = 'surveys' | 'preview' | 'fields' | 'candidates' | 'archive'
 type CandidateFilter = CandidateStatus | 'all'
-type RouteState = { mode: 'survey'; surveyId: string } | { mode: 'admin'; panel: AdminPanelKey }
+type RouteState = { mode: 'survey'; surveyId: string } | { mode: 'admin'; panel: AdminPanelKey; surveyId?: string }
 
 interface ResultRow {
   candidate: Candidate
@@ -57,6 +57,7 @@ const hash = ref(window.location.hash)
 const adminSurveyId = ref(appState.value.surveys[0]?.id ?? '')
 const apiLoading = ref(true)
 const apiError = ref('')
+const stateRevision = ref(0)
 const selectedCandidateIds = ref<string[]>([])
 const statusMessage = ref('')
 const submissionMessage = ref('')
@@ -141,7 +142,7 @@ const parseHash = (value: string): RouteState => {
   const segments = clean.split('/').filter(Boolean)
   if (segments[0] === 'admin') {
     const panel = adminPanels.some((item) => item.key === segments[1]) ? (segments[1] as AdminPanelKey) : 'surveys'
-    return { mode: 'admin', panel }
+    return { mode: 'admin', panel, surveyId: segments[2] }
   }
   if (segments[0] === 's' && segments[1]) return { mode: 'survey', surveyId: segments[1] }
   return { mode: 'survey', surveyId: appState.value.surveys[0]?.id ?? '' }
@@ -241,16 +242,28 @@ const fieldTypeOptions = [{ label: 'text', value: 'text' }, { label: 'textarea',
 
 const publicSurveyUrlFor = (id: string) => `${window.location.origin}${window.location.pathname}#/s/${id}`
 const navigateSurvey = (id: string) => { window.location.hash = `#/s/${id}` }
-const navigateAdmin = (panel: AdminPanelKey) => { window.location.hash = `#/admin/${panel}` }
-const openPublicSurvey = (id = survey.value.id) => { window.open(publicSurveyUrlFor(id), '_blank', 'noopener,noreferrer') }
+const navigateAdmin = (panel: AdminPanelKey, surveyId = adminSurveyId.value) => {
+  window.location.hash = surveyId ? `#/admin/${panel}/${surveyId}` : `#/admin/${panel}`
+}
+const openPublicSurvey = (id = activeSurveyId.value) => { window.open(publicSurveyUrlFor(id), '_blank', 'noopener,noreferrer') }
+const applyRemoteState = (state: AppState, preferredSurveyId = adminSurveyId.value) => {
+  appState.value = state
+  if (preferredSurveyId && state.surveys.some((item) => item.id === preferredSurveyId)) {
+    adminSurveyId.value = preferredSurveyId
+  } else {
+    adminSurveyId.value = state.surveys[0]?.id ?? ''
+  }
+}
+
 const loadAppState = async () => {
   apiLoading.value = true
   apiError.value = ''
+  const revisionAtStart = stateRevision.value
   try {
-    appState.value = await surveyApi.getState()
-    adminSurveyId.value = appState.value.surveys.some((item) => item.id === adminSurveyId.value)
-      ? adminSurveyId.value
-      : appState.value.surveys[0]?.id ?? ''
+    const nextState = await surveyApi.getState()
+    if (revisionAtStart === stateRevision.value) {
+      applyRemoteState(nextState, route.value.mode === 'admin' ? route.value.surveyId : adminSurveyId.value)
+    }
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : '无法连接 API 服务'
     message.error('无法连接 API 服务，请确认后端已启动。')
@@ -259,19 +272,21 @@ const loadAppState = async () => {
   }
 }
 
-const persist = async () => {
+const persist = async (preferredSurveyId = activeSurveyId.value) => {
   apiError.value = ''
+  stateRevision.value += 1
   try {
-    appState.value = await surveyApi.saveState(appState.value)
+    applyRemoteState(await surveyApi.saveState(appState.value), preferredSurveyId)
+    return true
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : '保存失败'
     message.error('保存失败，请检查 API 服务。')
+    return false
   }
 }
 
 const addAudit = (action: string, detail: string, actor = currentUser.value?.displayName ?? 'System') => {
   appState.value.auditLogs.unshift({ id: createId('log'), action, actor, detail, createdAt: new Date().toISOString() })
-  void persist()
 }
 
 const formatDate = (value?: string) => {
@@ -375,6 +390,12 @@ watch(() => appState.value.surveys.map((s) => s.id).join('|'), () => {
   if (route.value.mode === 'survey' && !appState.value.surveys.some((s) => s.id === activeSurveyId.value)) navigateSurvey(appState.value.surveys[0]?.id ?? '')
 }, { immediate: true })
 
+watch(() => (route.value.mode === 'admin' ? route.value.surveyId : undefined), (routeSurveyId) => {
+  if (routeSurveyId && appState.value.surveys.some((item) => item.id === routeSurveyId)) {
+    adminSurveyId.value = routeSurveyId
+  }
+}, { immediate: true })
+
 watch(() => survey.value.id, () => {
   syncSurveySettingsDraft(); syncFieldDrafts(); initSubmissionValues(); syncSelectionFromVote(); statusMessage.value = ''; submissionMessage.value = ''; voteConfirmOpen.value = false; candidateModalOpen.value = false; editingVote.value = false
 }, { immediate: true })
@@ -445,11 +466,12 @@ const openCandidateModal = () => {
   candidateModalOpen.value = true
 }
 
-const confirmSubmitVote = () => {
+const confirmSubmitVote = async () => {
   if (!hasVoteIdentity()) return
   const valid = selectedCandidateIds.value.filter((id) => approvedCandidateIds.value.has(id))
   selectedCandidateIds.value = [...new Set(valid)]
   if (selectedCandidateIds.value.length === 0 || selectedCandidateIds.value.length > voteLimit.value) return
+  const surveyId = survey.value.id
   const ts = new Date().toISOString()
   if (currentVote.value) {
     currentVote.value.history.push({ candidateIds: [...currentVote.value.candidateIds], changedAt: currentVote.value.updatedAt })
@@ -460,16 +482,18 @@ const confirmSubmitVote = () => {
     appState.value.votes.push({ id: createId('vote'), surveyId: survey.value.id, userId: effectiveUserId.value, userName: currentActorName(), gameId: currentGameId(), candidateIds: [...selectedCandidateIds.value], createdAt: ts, updatedAt: ts, history: [] })
     addAudit('vote.created', `${currentActorName()} 提交了「${survey.value.title}」的投票`)
   }
+  if (!(await persist(surveyId))) return
   voteConfirmOpen.value = false
-  submittedSurveyId.value = survey.value.id
+  submittedSurveyId.value = surveyId
   editingVote.value = false
   statusMessage.value = '提交成功'
 }
 
-const submitCandidate = () => {
+const submitCandidate = async () => {
   submissionMessage.value = ''
   if (!hasVoteIdentity()) { submissionMessage.value = survey.value.requireLogin ? '请先登录' : '请填写游戏昵称'; return }
   if (survey.value.status !== 'open' || !survey.value.candidateSubmission.enabled) { submissionMessage.value = '当前问卷没有开放候选项投稿。'; return }
+  const surveyId = survey.value.id
   for (const field of survey.value.candidateFields) {
     const val = submissionValues.value[field.key]?.trim() ?? ''
     if (field.required && !val) { submissionMessage.value = `请填写「${field.label}」。`; return }
@@ -481,28 +505,32 @@ const submitCandidate = () => {
   const status: CandidateStatus = survey.value.candidateSubmission.requiresReview ? 'pending' : 'approved'
   appState.value.candidates.unshift({ id: createId('candidate'), surveyId: survey.value.id, title, status, fields: { ...submissionValues.value }, submitterUserId: effectiveUserId.value, submitterName: currentActorName(), createdAt: ts, reviewedAt: status === 'approved' ? ts : undefined, reviewerName: status === 'approved' ? 'Auto Review' : undefined })
   addAudit('candidate.submitted', `${currentActorName()} 投稿了「${title}」`)
+  if (!(await persist(surveyId))) return
   resetSubmissionValues()
   candidateModalOpen.value = false
   message.success(status === 'pending' ? '候选项已提交，等待管理员审核。' : '候选项已进入投票列表。')
 }
 
-const setCandidateStatus = (candidate: Candidate, status: CandidateStatus) => {
+const setCandidateStatus = async (candidate: Candidate, status: CandidateStatus) => {
   if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+  const surveyId = candidate.surveyId
   candidate.status = status
   candidate.reviewedAt = new Date().toISOString()
   candidate.reviewerName = currentUser.value.displayName
   candidate.reviewNote = reviewNotes.value[candidate.id] ?? candidate.reviewNote ?? ''
   addAudit(`candidate.${status}`, `${currentUser.value.displayName} 将「${candidate.title}」标记为${statusLabel(status)}`)
+  if (!(await persist(surveyId))) return
   message.success(`「${candidate.title}」已标记为${statusLabel(status)}`)
 }
 
 const duplicateField = (f: FieldDefinition): FieldDefinition => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined })
 const createDefaultCandidateFields = (): FieldDefinition[] => defaultCandidateFieldTemplates.map((f) => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined }))
 
-const saveSurveySettings = (successText = '问卷设置已保存') => {
+const saveSurveySettings = async (successText = '问卷设置已保存') => {
   if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
   const title = surveySettingsDraft.title.trim()
   if (!title) { message.warning('请填写问卷标题。'); return false }
+  const surveyId = survey.value.id
   survey.value.title = title
   survey.value.description = surveySettingsDraft.description.trim() || '请选择你愿意参与的服务器方案。'
   survey.value.guideText = surveySettingsDraft.guideText.trim() || defaultGuideText
@@ -518,14 +546,15 @@ const saveSurveySettings = (successText = '问卷设置已保存') => {
   }
   survey.value.updatedAt = new Date().toISOString()
   addAudit('survey.settings_saved', `${currentUser.value.displayName} 保存了问卷「${survey.value.title}」的设置`)
+  if (!(await persist(surveyId))) return false
   syncSurveySettingsDraft()
   message.success(successText)
   return true
 }
 
-const publishSurvey = () => {
+const publishSurvey = async () => {
   surveySettingsDraft.status = 'open'
-  saveSurveySettings('问卷已发布，公开链接现在可访问。')
+  await saveSurveySettings('问卷已发布，公开链接现在可访问。')
 }
 
 const addField = () => {
@@ -568,8 +597,9 @@ const updateFieldOptions = (field: FieldDefinition, value: string) => {
   field.options = value.split('\n').map((o) => o.trim()).filter(Boolean)
 }
 
-const saveFieldDrafts = () => {
+const saveFieldDrafts = async (successText = '字段配置已保存') => {
   if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+  const surveyId = survey.value.id
   const normalized = fieldDrafts.value.map((field, index) => ({
     ...field,
     label: field.label.trim(),
@@ -586,12 +616,14 @@ const saveFieldDrafts = () => {
   survey.value.candidateFields = normalized.map(cloneField)
   survey.value.updatedAt = new Date().toISOString()
   addAudit('survey.fields_saved', `${currentUser.value.displayName} 保存了问卷「${survey.value.title}」的投稿字段`)
+  if (!(await persist(surveyId))) return false
   syncFieldDrafts()
   initSubmissionValues()
-  message.success('字段配置已保存')
+  message.success(successText)
+  return true
 }
 
-const createSurvey = () => {
+const createSurvey = async () => {
   if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
   const title = surveyDraft.title.trim()
   if (!title) { message.warning('请填写新问卷标题。'); return }
@@ -609,16 +641,23 @@ const createSurvey = () => {
   adminSurveyId.value = next.id
   surveyDraft.title = ''; surveyDraft.description = ''; surveyDraft.guideText = defaultGuideText
   addAudit('survey.created', `${currentUser.value.displayName} 创建了问卷「${next.title}」`)
+  if (!(await persist(next.id))) return
   syncSurveySettingsDraft()
   syncFieldDrafts()
   message.success(`问卷「${next.title}」已创建，开始配置投稿字段。`)
-  navigateAdmin('fields')
+  navigateAdmin('fields', next.id)
+}
+
+const openPreview = async () => {
+  if (surveySettingsDirty.value && !(await saveSurveySettings('问卷设置已保存'))) return
+  if (fieldsDirty.value && !(await saveFieldDrafts('字段配置已保存'))) return
+  navigateAdmin('preview', activeSurveyId.value)
 }
 
 const resetDemo = async () => {
   try {
-    appState.value = await surveyApi.resetState()
-    adminSurveyId.value = appState.value.surveys[0]?.id ?? ''
+    stateRevision.value += 1
+    applyRemoteState(await surveyApi.resetState(), '')
     if (!isAdminRoute.value) navigateSurvey(appState.value.surveys[0]?.id ?? '')
     else navigateAdmin('surveys')
     syncSurveySettingsDraft()
@@ -962,7 +1001,7 @@ const downloadFile = (name: string, content: string, type: string) => {
                     </n-tag>
                     <n-space :size="8">
                       <n-button @click="navigateAdmin('fields')">配置字段</n-button>
-                      <n-button @click="navigateAdmin('preview')">发布预览</n-button>
+                      <n-button @click="openPreview">发布预览</n-button>
                       <n-button type="primary" :disabled="!surveySettingsDirty" @click="saveSurveySettings()">保存设置</n-button>
                     </n-space>
                   </n-space>
@@ -987,7 +1026,7 @@ const downloadFile = (name: string, content: string, type: string) => {
               </div>
               <n-space :size="8">
                 <n-button v-if="survey.status !== 'open'" @click="publishSurvey">发布问卷</n-button>
-                <n-button type="primary" @click="openPublicSurvey()">新窗口打开公开链接</n-button>
+                <n-button type="primary" @click="openPublicSurvey(activeSurveyId)">新窗口打开公开链接</n-button>
               </n-space>
             </div>
 
@@ -1045,8 +1084,8 @@ const downloadFile = (name: string, content: string, type: string) => {
                   {{ fieldsDirty ? '有未保存字段' : '字段已保存' }}
                 </n-tag>
                 <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
-                <n-button type="primary" :disabled="!fieldsDirty" @click="saveFieldDrafts">保存字段</n-button>
-                <n-button @click="navigateAdmin('preview')">发布预览</n-button>
+                <n-button type="primary" :disabled="!fieldsDirty" @click="saveFieldDrafts()">保存字段</n-button>
+                <n-button @click="openPreview">发布预览</n-button>
               </n-space>
             </div>
 
