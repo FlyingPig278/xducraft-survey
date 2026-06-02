@@ -31,6 +31,7 @@ import type {
   FieldDefinition,
   FieldType,
   MockUser,
+  ResultVisibility,
   SurveyDefinition,
   SurveyStatus,
   UserRole,
@@ -88,7 +89,7 @@ const surveyDraft = reactive({
   guideText: '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。',
   voteMode: 'multiple' as VoteMode,
   maxVotes: 3,
-  publicResults: true,
+  resultVisibility: 'always' as ResultVisibility,
   allowVoteEdits: false,
   requireLogin: true,
   candidateSubmissionEnabled: true,
@@ -103,7 +104,7 @@ const surveySettingsDraft = reactive({
   status: 'draft' as SurveyStatus,
   voteMode: 'multiple' as VoteMode,
   maxVotes: 3,
-  publicResults: true,
+  resultVisibility: 'always' as ResultVisibility,
   allowVoteEdits: false,
   requireLogin: true,
   candidateSubmissionEnabled: true,
@@ -214,7 +215,7 @@ const settingsSnapshot = (item: SurveyDefinition) => JSON.stringify({
   status: item.status,
   voteMode: item.voteMode,
   maxVotes: item.maxVotes,
-  publicResults: item.publicResults,
+  resultVisibility: item.resultVisibility,
   allowVoteEdits: item.allowVoteEdits,
   requireLogin: item.requireLogin,
   candidateSubmissionEnabled: item.candidateSubmission.enabled,
@@ -223,10 +224,17 @@ const settingsSnapshot = (item: SurveyDefinition) => JSON.stringify({
 const settingsDraftSnapshot = () => JSON.stringify(surveySettingsDraft)
 const surveySettingsDirty = computed(() => settingsSnapshot(survey.value) !== settingsDraftSnapshot())
 const fieldsDirty = computed(() => JSON.stringify(survey.value.candidateFields) !== JSON.stringify(fieldDrafts.value))
+const canViewResultsBeforeVote = computed(() => survey.value.resultVisibility === 'always')
+const canViewResultsAfterVote = computed(() => survey.value.resultVisibility === 'always' || (survey.value.resultVisibility === 'after_vote' && hasSubmittedCurrentSurvey.value))
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
 const voteModeOptions = [{ label: '单选', value: 'single' }, { label: '多选', value: 'multiple' }]
 const statusOptions = [{ label: '草稿', value: 'draft' }, { label: '开放', value: 'open' }, { label: '已关闭', value: 'closed' }]
+const resultVisibilityOptions = [
+  { label: '投票前后均显示', value: 'always' },
+  { label: '投票后显示', value: 'after_vote' },
+  { label: '不对玩家显示', value: 'hidden' }
+]
 const fieldTypeOptions = [{ label: 'text', value: 'text' }, { label: 'textarea', value: 'textarea' }, { label: 'url', value: 'url' }, { label: 'select', value: 'select' }, { label: 'number', value: 'number' }]
 
 const publicSurveyUrlFor = (id: string) => `${window.location.origin}${window.location.pathname}#/s/${id}`
@@ -299,7 +307,7 @@ const syncSurveySettingsDraft = () => {
     status: survey.value.status,
     voteMode: survey.value.voteMode,
     maxVotes: survey.value.maxVotes,
-    publicResults: survey.value.publicResults,
+    resultVisibility: survey.value.resultVisibility,
     allowVoteEdits: survey.value.allowVoteEdits,
     requireLogin: survey.value.requireLogin,
     candidateSubmissionEnabled: survey.value.candidateSubmission.enabled,
@@ -471,7 +479,7 @@ const saveSurveySettings = (successText = '问卷设置已保存') => {
   survey.value.status = surveySettingsDraft.status
   survey.value.voteMode = surveySettingsDraft.voteMode
   survey.value.maxVotes = Math.max(1, Number(surveySettingsDraft.maxVotes) || 1)
-  survey.value.publicResults = surveySettingsDraft.publicResults
+  survey.value.resultVisibility = surveySettingsDraft.resultVisibility
   survey.value.allowVoteEdits = surveySettingsDraft.allowVoteEdits
   survey.value.requireLogin = surveySettingsDraft.requireLogin
   survey.value.candidateSubmission = {
@@ -561,7 +569,7 @@ const createSurvey = () => {
   const fields = surveyDraft.cloneCurrentFields ? survey.value.candidateFields.map(duplicateField) : createDefaultCandidateFields()
   const next: SurveyDefinition = {
     id: createId('survey'), title, description: surveyDraft.description.trim() || '请选择你愿意参与的服务器方案。',
-    guideText: surveyDraft.guideText.trim() || defaultGuideText, status: 'draft', publicResults: surveyDraft.publicResults,
+    guideText: surveyDraft.guideText.trim() || defaultGuideText, status: 'draft', resultVisibility: surveyDraft.resultVisibility,
     allowVoteEdits: surveyDraft.allowVoteEdits, requireLogin: surveyDraft.requireLogin, voteMode: surveyDraft.voteMode,
     maxVotes: Math.max(1, Number(surveyDraft.maxVotes) || 1),
     candidateSubmission: { enabled: surveyDraft.candidateSubmissionEnabled, requiresReview: surveyDraft.candidateSubmissionRequiresReview },
@@ -655,10 +663,10 @@ const downloadFile = (name: string, content: string, type: string) => {
             <n-result
               status="success"
               title="投票已提交"
-              :description="survey.publicResults ? `${totalVoters} 名玩家已参与，共 ${totalSelections} 个选择` : '你的选择已记录，票数结果由管理员控制是否公开。'"
+              :description="canViewResultsAfterVote ? `${totalVoters} 名玩家已参与，共 ${totalSelections} 个选择` : '你的选择已记录，票数结果由管理员控制是否公开。'"
               style="padding: 16px 0"
             />
-            <template v-if="survey.publicResults">
+            <template v-if="canViewResultsAfterVote">
               <n-space vertical :size="8">
                 <div v-for="row in resultRows" :key="row.candidate.id" class="result-item">
                   <div class="result-item-info">
@@ -688,15 +696,15 @@ const downloadFile = (name: string, content: string, type: string) => {
                 :class="{ selected: isSelected(candidate.id) }"
                 @click="toggleCandidate(candidate.id)"
               >
-                <div class="candidate-card-check">{{ isSelected(candidate.id) ? '✓' : '' }}</div>
+                <div class="candidate-card-check" :class="{ active: isSelected(candidate.id) }"></div>
                 <div class="candidate-card-body">
                   <div class="candidate-card-title">{{ candidate.title }}</div>
                   <div class="candidate-card-meta">{{ candidateMeta(candidate) || '未填写补充信息' }}</div>
-                  <div v-if="survey.publicResults" class="candidate-card-stats">
+                  <div v-if="canViewResultsBeforeVote" class="candidate-card-stats">
                     <n-progress :percentage="percentForCandidate(candidate.id)" :show-indicator="false" :height="5" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
                   </div>
                 </div>
-                <div v-if="survey.publicResults" class="candidate-card-count">
+                <div v-if="canViewResultsBeforeVote" class="candidate-card-count">
                   <strong>{{ countForCandidate(candidate.id) }}</strong>
                   <span>票</span>
                 </div>
@@ -707,7 +715,7 @@ const downloadFile = (name: string, content: string, type: string) => {
                 class="candidate-card custom-card"
                 @click="openCandidateModal"
               >
-                <div class="candidate-card-check">+</div>
+                <div class="candidate-card-check candidate-card-plus"></div>
                 <div class="candidate-card-body">
                   <div class="candidate-card-title">自定义候选项</div>
                   <div class="candidate-card-meta">新增候选项会进入审核，通过后可被投票</div>
@@ -851,9 +859,11 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <n-input-number v-model:value="surveyDraft.maxVotes" :min="1" style="width: 100%" />
                     </n-form-item>
                   </div>
+                  <n-form-item label="票数显示">
+                    <n-select v-model:value="surveyDraft.resultVisibility" :options="resultVisibilityOptions" />
+                  </n-form-item>
                   <n-space vertical :size="10" style="margin: 4px 0 16px">
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.requireLogin" size="small" /><span>强制要求登录</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.publicResults" size="small" /><span>公开实时票数</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.allowVoteEdits" size="small" /><span>允许投票后修改</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.candidateSubmissionEnabled" size="small" /><span>开放自定义候选项</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.candidateSubmissionRequiresReview" size="small" /><span>候选项需要审核</span></n-space>
@@ -887,9 +897,11 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <n-input-number v-model:value="surveySettingsDraft.maxVotes" :min="1" style="width: 100%" />
                     </n-form-item>
                   </div>
+                  <n-form-item label="票数显示">
+                    <n-select v-model:value="surveySettingsDraft.resultVisibility" :options="resultVisibilityOptions" />
+                  </n-form-item>
                   <n-space vertical :size="10" style="margin: 4px 0 16px">
                     <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.requireLogin" size="small" /><span>强制要求登录</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.publicResults" size="small" /><span>公开实时票数</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.allowVoteEdits" size="small" /><span>允许投票后修改</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.candidateSubmissionEnabled" size="small" /><span>开放自定义候选项</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.candidateSubmissionRequiresReview" size="small" /><span>候选项需要审核</span></n-space>
@@ -950,17 +962,17 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <div class="candidate-card-body">
                         <div class="candidate-card-title">{{ c.title }}</div>
                         <div class="candidate-card-meta">{{ candidateMeta(c) || '未填写补充信息' }}</div>
-                        <div v-if="survey.publicResults" class="candidate-card-stats">
+                        <div v-if="canViewResultsBeforeVote" class="candidate-card-stats">
                           <n-progress :percentage="percentForCandidate(c.id)" :show-indicator="false" :height="5" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
                         </div>
                       </div>
-                      <div v-if="survey.publicResults" class="candidate-card-count">
+                      <div v-if="canViewResultsBeforeVote" class="candidate-card-count">
                         <strong>{{ countForCandidate(c.id) }}</strong>
                         <span>票</span>
                       </div>
                     </div>
                     <div class="candidate-card custom-card" style="cursor: default">
-                      <div class="candidate-card-check">+</div>
+                      <div class="candidate-card-check candidate-card-plus"></div>
                       <div class="candidate-card-body">
                         <div class="candidate-card-title">自定义候选项</div>
                         <div class="candidate-card-meta">新增候选项会进入审核，通过后可被投票</div>

@@ -78,23 +78,31 @@ textarea {
 
 .candidate-card-check {
   flex-shrink: 0;
-  display: grid;
-  place-items: center;
+  position: relative;
+  display: block;
   width: 24px;
   height: 24px;
   border: 2px solid #cbd5e1;
   border-radius: 6px;
   background: #fff;
-  color: transparent;
-  font-size: 14px;
-  font-weight: 700;
   transition: all 0.15s ease;
 }
 
 .candidate-card.selected .candidate-card-check {
   border-color: #6366f1;
   background: #6366f1;
-  color: #fff;
+}
+
+.candidate-card-check.active::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 3px;
+  width: 6px;
+  height: 12px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 .candidate-card-body {
@@ -121,11 +129,14 @@ textarea {
 
 .candidate-card-count {
   flex-shrink: 0;
-  display: grid;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 3px;
   min-width: 52px;
-  justify-items: end;
   color: #64748b;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .candidate-card-count strong {
@@ -147,9 +158,23 @@ textarea {
 
 .candidate-card.custom-card .candidate-card-check {
   border-color: #c7d2fe;
-  color: #6366f1;
-  font-size: 18px;
-  font-weight: 400;
+}
+
+.candidate-card-plus::before,
+.candidate-card-plus::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: #6366f1;
+  transform: translate(-50%, -50%);
+}
+
+.candidate-card-plus::after {
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .submit-footer {

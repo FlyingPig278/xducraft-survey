@@ -4,6 +4,8 @@ export type SurveyStatus = 'draft' | 'open' | 'closed'
 
 export type VoteMode = 'single' | 'multiple'
 
+export type ResultVisibility = 'always' | 'after_vote' | 'hidden'
+
 export type CandidateStatus = 'pending' | 'approved' | 'rejected'
 
 export type UserRole = 'player' | 'admin'
@@ -24,7 +26,7 @@ export interface SurveyDefinition {
   description: string
   guideText: string
   status: SurveyStatus
-  publicResults: boolean
+  resultVisibility: ResultVisibility
   allowVoteEdits: boolean
   requireLogin: boolean
   voteMode: VoteMode
