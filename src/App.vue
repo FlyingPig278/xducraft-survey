@@ -5,15 +5,11 @@ import {
   NButton,
   NCard,
   NConfigProvider,
-  NDescriptions,
-  NDescriptionsItem,
-  NDivider,
   NEmpty,
   NForm,
   NFormItem,
   NInput,
   NInputNumber,
-  NMessageProvider,
   NModal,
   NProgress,
   NResult,
@@ -66,6 +62,7 @@ const submissionValues = ref<Record<string, string>>({})
 const voteConfirmOpen = ref(false)
 const candidateModalOpen = ref(false)
 const submittedSurveyId = ref('')
+const editingVote = ref(false)
 const candidateFilter = ref<CandidateFilter>('pending')
 const draggedFieldId = ref('')
 
@@ -98,6 +95,22 @@ const surveyDraft = reactive({
   candidateSubmissionRequiresReview: true,
   cloneCurrentFields: true
 })
+
+const surveySettingsDraft = reactive({
+  title: '',
+  description: '',
+  guideText: '',
+  status: 'draft' as SurveyStatus,
+  voteMode: 'multiple' as VoteMode,
+  maxVotes: 3,
+  publicResults: true,
+  allowVoteEdits: false,
+  requireLogin: true,
+  candidateSubmissionEnabled: true,
+  candidateSubmissionRequiresReview: true
+})
+
+const fieldDrafts = ref<FieldDefinition[]>([])
 
 const defaultCandidateFieldTemplates: Array<Omit<FieldDefinition, 'id'>> = [
   { key: 'packName', label: '整合包名', type: 'text', required: true, placeholder: '例如 All the Mods 10' },
@@ -142,6 +155,8 @@ const adminPanel = computed(() => (route.value.mode === 'admin' ? route.value.pa
 const isAdminRoute = computed(() => route.value.mode === 'admin')
 const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
+const surveyById = (id: string) => appState.value.surveys.find((item) => item.id === id)
+const surveyTitleById = (id: string) => surveyById(id)?.title ?? '未知问卷'
 const surveyCandidates = computed(() => appState.value.candidates.filter((c) => c.surveyId === survey.value.id))
 const surveyVotes = computed(() => appState.value.votes.filter((v) => v.surveyId === survey.value.id))
 const approvedCandidates = computed(() => surveyCandidates.value.filter((c) => c.status === 'approved'))
@@ -179,31 +194,46 @@ const resultRows = computed<ResultRow[]>(() =>
     })
     .sort((a, b) => b.count - a.count || a.candidate.title.localeCompare(b.candidate.title))
 )
-const showResults = computed(() => Boolean(currentVote.value) || submittedSurveyId.value === survey.value.id)
+const hasSubmittedCurrentSurvey = computed(() => Boolean(currentVote.value) || submittedSurveyId.value === survey.value.id)
+const showSubmissionSummary = computed(() => hasSubmittedCurrentSurvey.value && !editingVote.value)
 const latestVote = computed(() => [...surveyVotes.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null)
 const adminCandidateRows = computed(() => {
-  const rows = candidateFilter.value === 'all' ? surveyCandidates.value : surveyCandidates.value.filter((c) => c.status === candidateFilter.value)
+  const rows = candidateFilter.value === 'all' ? appState.value.candidates : appState.value.candidates.filter((c) => c.status === candidateFilter.value)
   return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 })
 const publicSurveyUrl = computed(() => `${window.location.origin}${window.location.pathname}#/s/${survey.value.id}`)
 const publicSurveyQrUrl = computed(() => `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicSurveyUrl.value)}`)
 const surveyGuideText = computed(() => survey.value.guideText || defaultGuideText)
 const surveyHasVotes = computed(() => surveyVotes.value.length > 0)
+const surveyHasCandidates = computed(() => surveyCandidates.value.length > 0)
+
+const settingsSnapshot = (item: SurveyDefinition) => JSON.stringify({
+  title: item.title,
+  description: item.description,
+  guideText: item.guideText,
+  status: item.status,
+  voteMode: item.voteMode,
+  maxVotes: item.maxVotes,
+  publicResults: item.publicResults,
+  allowVoteEdits: item.allowVoteEdits,
+  requireLogin: item.requireLogin,
+  candidateSubmissionEnabled: item.candidateSubmission.enabled,
+  candidateSubmissionRequiresReview: item.candidateSubmission.requiresReview
+})
+const settingsDraftSnapshot = () => JSON.stringify(surveySettingsDraft)
+const surveySettingsDirty = computed(() => settingsSnapshot(survey.value) !== settingsDraftSnapshot())
+const fieldsDirty = computed(() => JSON.stringify(survey.value.candidateFields) !== JSON.stringify(fieldDrafts.value))
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
 const voteModeOptions = [{ label: '单选', value: 'single' }, { label: '多选', value: 'multiple' }]
 const statusOptions = [{ label: '草稿', value: 'draft' }, { label: '开放', value: 'open' }, { label: '已关闭', value: 'closed' }]
 const fieldTypeOptions = [{ label: 'text', value: 'text' }, { label: 'textarea', value: 'textarea' }, { label: 'url', value: 'url' }, { label: 'select', value: 'select' }, { label: 'number', value: 'number' }]
 
+const publicSurveyUrlFor = (id: string) => `${window.location.origin}${window.location.pathname}#/s/${id}`
 const navigateSurvey = (id: string) => { window.location.hash = `#/s/${id}` }
 const navigateAdmin = (panel: AdminPanelKey) => { window.location.hash = `#/admin/${panel}` }
+const openPublicSurvey = (id = survey.value.id) => { window.open(publicSurveyUrlFor(id), '_blank', 'noopener,noreferrer') }
 const persist = () => { saveState(appState.value) }
-
-const touchSurvey = () => {
-  survey.value.maxVotes = Math.max(1, Number(survey.value.maxVotes) || 1)
-  survey.value.updatedAt = new Date().toISOString()
-  persist()
-}
 
 const addAudit = (action: string, detail: string, actor = currentUser.value?.displayName ?? 'System') => {
   appState.value.auditLogs.unshift({ id: createId('log'), action, actor, detail, createdAt: new Date().toISOString() })
@@ -227,11 +257,12 @@ const statusTagType = (status: string): 'success' | 'warning' | 'error' | 'info'
   return types[status] ?? 'default'
 }
 
-const buildKey = (label: string, fallbackIndex = survey.value.candidateFields.length + 1) => {
+const buildKey = (label: string, fallbackIndex = Math.max(fieldDrafts.value.length, survey.value.candidateFields.length) + 1) => {
   const key = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   return key || `custom_field_${fallbackIndex}`
 }
 
+const cloneField = (f: FieldDefinition): FieldDefinition => ({ ...f, id: f.id || createId('field'), options: f.options ? [...f.options] : undefined })
 const fieldOptions = (field: FieldDefinition) => field.options?.filter(Boolean) ?? []
 const fieldSelectOptions = (field: FieldDefinition) => fieldOptions(field).map((o) => ({ label: o, value: o }))
 
@@ -242,13 +273,43 @@ const validateUrl = (value: string) => {
 
 const candidateTitleById = (id: string) => approvedCandidates.value.find((c) => c.id === id)?.title ?? '未知候选项'
 
-const candidateMeta = (candidate: Candidate) =>
-  survey.value.candidateFields
+const candidateMetaFor = (candidate: Candidate, ownerSurvey = surveyById(candidate.surveyId)) =>
+  (ownerSurvey?.candidateFields ?? [])
     .filter((f) => f.key !== 'packName' && f.type !== 'textarea' && f.type !== 'url')
     .slice(0, 3)
     .map((f) => candidate.fields[f.key])
     .filter(Boolean)
     .join(' / ')
+
+const candidateMeta = (candidate: Candidate) => candidateMetaFor(candidate, survey.value)
+const candidateReviewFields = (candidate: Candidate) => {
+  const ownerSurvey = surveyById(candidate.surveyId)
+  const fields = ownerSurvey?.candidateFields ?? []
+  if (fields.length === 0) return Object.entries(candidate.fields).map(([key, value]) => ({ key, label: key, value }))
+  return fields.map((field) => ({ key: field.key, label: field.label, value: candidate.fields[field.key] || '未填' }))
+}
+const countForCandidate = (id: string) => candidateCounts.value.get(id) ?? 0
+const percentForCandidate = (id: string) => totalVoters.value > 0 ? Math.round((countForCandidate(id) / totalVoters.value) * 100) : 0
+
+const syncSurveySettingsDraft = () => {
+  Object.assign(surveySettingsDraft, {
+    title: survey.value.title,
+    description: survey.value.description,
+    guideText: survey.value.guideText,
+    status: survey.value.status,
+    voteMode: survey.value.voteMode,
+    maxVotes: survey.value.maxVotes,
+    publicResults: survey.value.publicResults,
+    allowVoteEdits: survey.value.allowVoteEdits,
+    requireLogin: survey.value.requireLogin,
+    candidateSubmissionEnabled: survey.value.candidateSubmission.enabled,
+    candidateSubmissionRequiresReview: survey.value.candidateSubmission.requiresReview
+  })
+}
+
+const syncFieldDrafts = () => {
+  fieldDrafts.value = survey.value.candidateFields.map(cloneField)
+}
 
 const initSubmissionValues = () => {
   const next: Record<string, string> = {}
@@ -280,7 +341,7 @@ watch(() => appState.value.surveys.map((s) => s.id).join('|'), () => {
 }, { immediate: true })
 
 watch(() => survey.value.id, () => {
-  initSubmissionValues(); syncSelectionFromVote(); statusMessage.value = ''; submissionMessage.value = ''; voteConfirmOpen.value = false; candidateModalOpen.value = false
+  syncSurveySettingsDraft(); syncFieldDrafts(); initSubmissionValues(); syncSelectionFromVote(); statusMessage.value = ''; submissionMessage.value = ''; voteConfirmOpen.value = false; candidateModalOpen.value = false; editingVote.value = false
 }, { immediate: true })
 
 watch(currentUser, syncSelectionFromVote, { immediate: true })
@@ -322,7 +383,7 @@ const isSelected = (id: string) => selectedCandidateIds.value.includes(id)
 
 const toggleCandidate = (candidateId: string) => {
   statusMessage.value = ''
-  if (showResults.value && !survey.value.allowVoteEdits) return
+  if (hasSubmittedCurrentSurvey.value && !survey.value.allowVoteEdits) return
   if (survey.value.status !== 'open') { message.warning('当前问卷不在开放投票状态。'); return }
   if (!approvedCandidateIds.value.has(candidateId)) return
   if (survey.value.voteMode === 'single') { selectedCandidateIds.value = isSelected(candidateId) ? [] : [candidateId]; return }
@@ -363,6 +424,7 @@ const confirmSubmitVote = () => {
   }
   voteConfirmOpen.value = false
   submittedSurveyId.value = survey.value.id
+  editingVote.value = false
   statusMessage.value = '提交成功'
 }
 
@@ -396,54 +458,99 @@ const setCandidateStatus = (candidate: Candidate, status: CandidateStatus) => {
   message.success(`「${candidate.title}」已标记为${statusLabel(status)}`)
 }
 
-const cloneField = (f: FieldDefinition): FieldDefinition => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined })
+const duplicateField = (f: FieldDefinition): FieldDefinition => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined })
 const createDefaultCandidateFields = (): FieldDefinition[] => defaultCandidateFieldTemplates.map((f) => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined }))
+
+const saveSurveySettings = (successText = '问卷设置已保存') => {
+  if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
+  const title = surveySettingsDraft.title.trim()
+  if (!title) { message.warning('请填写问卷标题。'); return false }
+  survey.value.title = title
+  survey.value.description = surveySettingsDraft.description.trim() || '请选择你愿意参与的服务器方案。'
+  survey.value.guideText = surveySettingsDraft.guideText.trim() || defaultGuideText
+  survey.value.status = surveySettingsDraft.status
+  survey.value.voteMode = surveySettingsDraft.voteMode
+  survey.value.maxVotes = Math.max(1, Number(surveySettingsDraft.maxVotes) || 1)
+  survey.value.publicResults = surveySettingsDraft.publicResults
+  survey.value.allowVoteEdits = surveySettingsDraft.allowVoteEdits
+  survey.value.requireLogin = surveySettingsDraft.requireLogin
+  survey.value.candidateSubmission = {
+    enabled: surveySettingsDraft.candidateSubmissionEnabled,
+    requiresReview: surveySettingsDraft.candidateSubmissionRequiresReview
+  }
+  survey.value.updatedAt = new Date().toISOString()
+  addAudit('survey.settings_saved', `${currentUser.value.displayName} 保存了问卷「${survey.value.title}」的设置`)
+  syncSurveySettingsDraft()
+  message.success(successText)
+  return true
+}
+
+const publishSurvey = () => {
+  surveySettingsDraft.status = 'open'
+  saveSurveySettings('问卷已发布，公开链接现在可访问。')
+}
 
 const addField = () => {
   const label = newField.label.trim()
   if (!label) { message.warning('请先填写字段名称。'); return }
   const key = (newField.key.trim() || buildKey(label)).replace(/[^a-zA-Z0-9_]/g, '_')
-  if (survey.value.candidateFields.some((f) => f.key === key)) { message.warning('字段 key 已存在。'); return }
-  survey.value.candidateFields.push({ id: createId('field'), key, label, type: newField.type, required: newField.required, placeholder: newField.placeholder.trim(), options: newField.optionsText.split('\n').map((o) => o.trim()).filter(Boolean) })
+  if (fieldDrafts.value.some((f) => f.key === key)) { message.warning('字段 key 已存在。'); return }
+  fieldDrafts.value = [...fieldDrafts.value, { id: createId('field'), key, label, type: newField.type, required: newField.required, placeholder: newField.placeholder.trim(), options: newField.optionsText.split('\n').map((o) => o.trim()).filter(Boolean) }]
   newField.label = ''; newField.key = ''; newField.type = 'text'; newField.required = true; newField.placeholder = ''; newField.optionsText = ''
-  touchSurvey()
-  addAudit('survey.field_added', `新增投稿字段「${label}」`)
-  message.success('字段已添加')
+  message.success('字段已加入草稿，请保存后生效。')
 }
 
 const removeField = (field: FieldDefinition) => {
-  survey.value.candidateFields = survey.value.candidateFields.filter((f) => f.id !== field.id)
-  touchSurvey()
-  addAudit('survey.field_removed', `移除投稿字段「${field.label}」`)
+  fieldDrafts.value = fieldDrafts.value.filter((f) => f.id !== field.id)
 }
 
 const moveField = (fieldId: string, offset: number) => {
-  const fields = [...survey.value.candidateFields]
+  const fields = [...fieldDrafts.value]
   const idx = fields.findIndex((f) => f.id === fieldId)
   const next = idx + offset
   if (idx < 0 || next < 0 || next >= fields.length) return
   const [f] = fields.splice(idx, 1)
   fields.splice(next, 0, f)
-  survey.value.candidateFields = fields
-  touchSurvey()
+  fieldDrafts.value = fields
 }
 
 const dropFieldBefore = (targetId: string) => {
   const srcId = draggedFieldId.value; draggedFieldId.value = ''
   if (!srcId || srcId === targetId) return
-  const fields = [...survey.value.candidateFields]
+  const fields = [...fieldDrafts.value]
   const si = fields.findIndex((f) => f.id === srcId)
   const ti = fields.findIndex((f) => f.id === targetId)
   if (si < 0 || ti < 0) return
   const [f] = fields.splice(si, 1)
   fields.splice(si < ti ? ti - 1 : ti, 0, f)
-  survey.value.candidateFields = fields
-  touchSurvey()
+  fieldDrafts.value = fields
 }
 
 const updateFieldOptions = (field: FieldDefinition, value: string) => {
   field.options = value.split('\n').map((o) => o.trim()).filter(Boolean)
-  touchSurvey()
+}
+
+const saveFieldDrafts = () => {
+  if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+  const normalized = fieldDrafts.value.map((field, index) => ({
+    ...field,
+    label: field.label.trim(),
+    key: (field.key.trim() || buildKey(field.label, index + 1)).replace(/[^a-zA-Z0-9_]/g, '_'),
+    placeholder: field.placeholder?.trim() ?? '',
+    options: fieldOptions(field)
+  }))
+  if (normalized.some((field) => !field.label || !field.key)) { message.warning('字段名称和 Key 不能为空。'); return }
+  const keySet = new Set<string>()
+  for (const field of normalized) {
+    if (keySet.has(field.key)) { message.warning(`字段 key「${field.key}」重复。`); return }
+    keySet.add(field.key)
+  }
+  survey.value.candidateFields = normalized.map(cloneField)
+  survey.value.updatedAt = new Date().toISOString()
+  addAudit('survey.fields_saved', `${currentUser.value.displayName} 保存了问卷「${survey.value.title}」的投稿字段`)
+  syncFieldDrafts()
+  initSubmissionValues()
+  message.success('字段配置已保存')
 }
 
 const createSurvey = () => {
@@ -451,7 +558,7 @@ const createSurvey = () => {
   const title = surveyDraft.title.trim()
   if (!title) { message.warning('请填写新问卷标题。'); return }
   const ts = new Date().toISOString()
-  const fields = surveyDraft.cloneCurrentFields ? survey.value.candidateFields.map(cloneField) : createDefaultCandidateFields()
+  const fields = surveyDraft.cloneCurrentFields ? survey.value.candidateFields.map(duplicateField) : createDefaultCandidateFields()
   const next: SurveyDefinition = {
     id: createId('survey'), title, description: surveyDraft.description.trim() || '请选择你愿意参与的服务器方案。',
     guideText: surveyDraft.guideText.trim() || defaultGuideText, status: 'draft', publicResults: surveyDraft.publicResults,
@@ -464,15 +571,20 @@ const createSurvey = () => {
   adminSurveyId.value = next.id
   surveyDraft.title = ''; surveyDraft.description = ''; surveyDraft.guideText = defaultGuideText
   addAudit('survey.created', `${currentUser.value.displayName} 创建了问卷「${next.title}」`)
-  message.success(`问卷「${next.title}」已创建`)
-  navigateAdmin('surveys')
+  syncSurveySettingsDraft()
+  syncFieldDrafts()
+  message.success(`问卷「${next.title}」已创建，开始配置投稿字段。`)
+  navigateAdmin('fields')
 }
 
 const resetDemo = () => {
   appState.value = createSeedState()
   adminSurveyId.value = appState.value.surveys[0]?.id ?? ''
   saveState(appState.value)
-  navigateSurvey(appState.value.surveys[0]?.id ?? '')
+  if (!isAdminRoute.value) navigateSurvey(appState.value.surveys[0]?.id ?? '')
+  else navigateAdmin('surveys')
+  syncSurveySettingsDraft()
+  syncFieldDrafts()
   initSubmissionValues(); syncSelectionFromVote()
   message.success('演示数据已重置')
 }
@@ -538,18 +650,31 @@ const downloadFile = (name: string, content: string, type: string) => {
             </n-form-item>
           </div>
 
-          <!-- Results view -->
-          <template v-if="showResults">
-            <n-result status="success" title="投票已提交" :description="`${totalVoters} 名玩家已参与，共 ${totalSelections} 个选择`" style="padding: 16px 0" />
-            <n-space vertical :size="8">
-              <div v-for="row in resultRows" :key="row.candidate.id" class="result-item">
-                <div class="result-item-info">
-                  <div class="result-item-title">{{ row.candidate.title }}</div>
-                  <div class="result-item-meta">{{ candidateMeta(row.candidate) || '未填写补充信息' }}</div>
-                  <n-progress :percentage="row.percent" :show-indicator="false" :height="6" style="margin-top: 8px" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
+          <!-- Submitted view -->
+          <template v-if="showSubmissionSummary">
+            <n-result
+              status="success"
+              title="投票已提交"
+              :description="survey.publicResults ? `${totalVoters} 名玩家已参与，共 ${totalSelections} 个选择` : '你的选择已记录，票数结果由管理员控制是否公开。'"
+              style="padding: 16px 0"
+            />
+            <template v-if="survey.publicResults">
+              <n-space vertical :size="8">
+                <div v-for="row in resultRows" :key="row.candidate.id" class="result-item">
+                  <div class="result-item-info">
+                    <div class="result-item-title">{{ row.candidate.title }}</div>
+                    <div class="result-item-meta">{{ candidateMeta(row.candidate) || '未填写补充信息' }}</div>
+                    <n-progress :percentage="row.percent" :show-indicator="false" :height="6" style="margin-top: 8px" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
+                  </div>
+                  <div class="result-item-count">{{ row.count }} 票 <span style="color: #94a3b8; font-weight: 400; font-size: 13px">({{ row.percent }}%)</span></div>
                 </div>
-                <div class="result-item-count">{{ row.count }} 票 <span style="color: #94a3b8; font-weight: 400; font-size: 13px">({{ row.percent }}%)</span></div>
-              </div>
+              </n-space>
+            </template>
+            <n-alert v-else type="info" :bordered="false">
+              本问卷未公开实时票数。管理员仍可在后台留档和导出完整结果。
+            </n-alert>
+            <n-space v-if="survey.allowVoteEdits && survey.status === 'open'" justify="end" style="margin-top: 18px">
+              <n-button type="primary" @click="editingVote = true">修改投票</n-button>
             </n-space>
           </template>
 
@@ -567,6 +692,13 @@ const downloadFile = (name: string, content: string, type: string) => {
                 <div class="candidate-card-body">
                   <div class="candidate-card-title">{{ candidate.title }}</div>
                   <div class="candidate-card-meta">{{ candidateMeta(candidate) || '未填写补充信息' }}</div>
+                  <div v-if="survey.publicResults" class="candidate-card-stats">
+                    <n-progress :percentage="percentForCandidate(candidate.id)" :show-indicator="false" :height="5" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
+                  </div>
+                </div>
+                <div v-if="survey.publicResults" class="candidate-card-count">
+                  <strong>{{ countForCandidate(candidate.id) }}</strong>
+                  <span>票</span>
                 </div>
               </div>
 
@@ -588,7 +720,7 @@ const downloadFile = (name: string, content: string, type: string) => {
                 已选 {{ selectedCandidateIds.length }} / {{ voteLimit }}
               </n-tag>
               <n-button type="primary" @click="openVoteConfirm" :disabled="selectedCandidateIds.length === 0">
-                提交投票
+                {{ currentVote ? '提交修改' : '提交投票' }}
               </n-button>
             </div>
           </template>
@@ -665,8 +797,8 @@ const downloadFile = (name: string, content: string, type: string) => {
           </button>
         </nav>
         <div class="admin-sidebar-footer">
-          <n-button block quaternary size="small" @click="navigateSurvey(survey.id)" style="color: #94a3b8">
-            打开当前问卷
+          <n-button block quaternary size="small" @click="openPublicSurvey()" style="color: #94a3b8">
+            新窗口打开问卷
           </n-button>
         </div>
       </aside>
@@ -721,12 +853,12 @@ const downloadFile = (name: string, content: string, type: string) => {
                   </div>
                   <n-space vertical :size="10" style="margin: 4px 0 16px">
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.requireLogin" size="small" /><span>强制要求登录</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.publicResults" size="small" /><span>提交后显示结果</span></n-space>
+                    <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.publicResults" size="small" /><span>公开实时票数</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.allowVoteEdits" size="small" /><span>允许投票后修改</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.candidateSubmissionEnabled" size="small" /><span>开放自定义候选项</span></n-space>
                     <n-space align="center" :size="8"><n-switch v-model:value="surveyDraft.candidateSubmissionRequiresReview" size="small" /><span>候选项需要审核</span></n-space>
                   </n-space>
-                  <n-button type="primary" block @click="createSurvey">创建问卷</n-button>
+                  <n-button type="primary" block @click="createSurvey">创建并配置字段</n-button>
                 </n-form>
               </n-card>
 
@@ -736,28 +868,47 @@ const downloadFile = (name: string, content: string, type: string) => {
                     <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" />
                   </n-form-item>
                   <n-form-item label="标题">
-                    <n-input v-model:value="survey.title" @blur="touchSurvey" />
+                    <n-input v-model:value="surveySettingsDraft.title" />
                   </n-form-item>
                   <n-form-item label="状态">
-                    <n-select v-model:value="survey.status" :options="statusOptions" @update:value="touchSurvey" />
+                    <n-select v-model:value="surveySettingsDraft.status" :options="statusOptions" />
                   </n-form-item>
                   <n-form-item label="说明">
-                    <n-input v-model:value="survey.description" type="textarea" :rows="2" @blur="touchSurvey" />
+                    <n-input v-model:value="surveySettingsDraft.description" type="textarea" :rows="2" />
                   </n-form-item>
                   <n-form-item label="答题指引">
-                    <n-input v-model:value="survey.guideText" type="textarea" :rows="2" @blur="touchSurvey" />
+                    <n-input v-model:value="surveySettingsDraft.guideText" type="textarea" :rows="2" />
                   </n-form-item>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+                    <n-form-item label="模式">
+                      <n-select v-model:value="surveySettingsDraft.voteMode" :options="voteModeOptions" />
+                    </n-form-item>
+                    <n-form-item label="最多项数">
+                      <n-input-number v-model:value="surveySettingsDraft.maxVotes" :min="1" style="width: 100%" />
+                    </n-form-item>
+                  </div>
                   <n-space vertical :size="10" style="margin: 4px 0 16px">
-                    <n-space align="center" :size="8"><n-switch v-model:value="survey.requireLogin" size="small" @update:value="touchSurvey" /><span>强制要求登录</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="survey.publicResults" size="small" @update:value="touchSurvey" /><span>提交后显示结果</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="survey.allowVoteEdits" size="small" @update:value="touchSurvey" /><span>允许投票后修改</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="survey.candidateSubmission.enabled" size="small" @update:value="touchSurvey" /><span>开放自定义候选项</span></n-space>
-                    <n-space align="center" :size="8"><n-switch v-model:value="survey.candidateSubmission.requiresReview" size="small" @update:value="touchSurvey" /><span>候选项需要审核</span></n-space>
+                    <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.requireLogin" size="small" /><span>强制要求登录</span></n-space>
+                    <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.publicResults" size="small" /><span>公开实时票数</span></n-space>
+                    <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.allowVoteEdits" size="small" /><span>允许投票后修改</span></n-space>
+                    <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.candidateSubmissionEnabled" size="small" /><span>开放自定义候选项</span></n-space>
+                    <n-space align="center" :size="8"><n-switch v-model:value="surveySettingsDraft.candidateSubmissionRequiresReview" size="small" /><span>候选项需要审核</span></n-space>
                   </n-space>
 
                   <n-alert v-if="surveyHasVotes" type="info" :bordered="false" style="margin-bottom: 16px">
                     该问卷已有 {{ surveyVotes.length }} 条投票。修改规则会影响之后的提交。
                   </n-alert>
+
+                  <n-space justify="space-between" align="center" style="margin-bottom: 16px">
+                    <n-tag :type="surveySettingsDirty ? 'warning' : 'success'" :bordered="false">
+                      {{ surveySettingsDirty ? '有未保存设置' : '设置已保存' }}
+                    </n-tag>
+                    <n-space :size="8">
+                      <n-button @click="navigateAdmin('fields')">配置字段</n-button>
+                      <n-button @click="navigateAdmin('preview')">发布预览</n-button>
+                      <n-button type="primary" :disabled="!surveySettingsDirty" @click="saveSurveySettings()">保存设置</n-button>
+                    </n-space>
+                  </n-space>
 
                   <div class="share-section">
                     <strong>发布链接</strong>
@@ -777,7 +928,10 @@ const downloadFile = (name: string, content: string, type: string) => {
                 <h1>发布预览</h1>
                 <p>预览玩家通过公开链接打开时看到的答题页。</p>
               </div>
-              <n-button type="primary" @click="navigateSurvey(survey.id)">打开公开链接</n-button>
+              <n-space :size="8">
+                <n-button v-if="survey.status !== 'open'" @click="publishSurvey">发布问卷</n-button>
+                <n-button type="primary" @click="openPublicSurvey()">新窗口打开公开链接</n-button>
+              </n-space>
             </div>
 
             <div class="preview-frame">
@@ -796,6 +950,13 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <div class="candidate-card-body">
                         <div class="candidate-card-title">{{ c.title }}</div>
                         <div class="candidate-card-meta">{{ candidateMeta(c) || '未填写补充信息' }}</div>
+                        <div v-if="survey.publicResults" class="candidate-card-stats">
+                          <n-progress :percentage="percentForCandidate(c.id)" :show-indicator="false" :height="5" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
+                        </div>
+                      </div>
+                      <div v-if="survey.publicResults" class="candidate-card-count">
+                        <strong>{{ countForCandidate(c.id) }}</strong>
+                        <span>票</span>
                       </div>
                     </div>
                     <div class="candidate-card custom-card" style="cursor: default">
@@ -822,12 +983,23 @@ const downloadFile = (name: string, content: string, type: string) => {
                 <h1>字段配置</h1>
                 <p>管理当前问卷的候选项投稿字段，可拖拽排序。</p>
               </div>
-              <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
+              <n-space align="center" :size="8">
+                <n-tag :type="fieldsDirty ? 'warning' : 'success'" :bordered="false">
+                  {{ fieldsDirty ? '有未保存字段' : '字段已保存' }}
+                </n-tag>
+                <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
+                <n-button type="primary" :disabled="!fieldsDirty" @click="saveFieldDrafts">保存字段</n-button>
+                <n-button @click="navigateAdmin('preview')">发布预览</n-button>
+              </n-space>
             </div>
+
+            <n-alert v-if="surveyHasCandidates" type="warning" :bordered="false" style="margin-bottom: 16px">
+              当前问卷已有候选项。修改字段 Key 后，旧候选项中对应字段可能不再显示。
+            </n-alert>
 
             <n-space vertical :size="12">
               <div
-                v-for="(field, index) in survey.candidateFields"
+                v-for="(field, index) in fieldDrafts"
                 :key="field.id"
                 class="field-row"
                 draggable="true"
@@ -837,22 +1009,22 @@ const downloadFile = (name: string, content: string, type: string) => {
                 style="cursor: grab"
               >
                 <n-form-item label="名称" :show-feedback="false">
-                  <n-input v-model:value="field.label" @blur="touchSurvey" />
+                  <n-input v-model:value="field.label" />
                 </n-form-item>
                 <n-form-item label="Key" :show-feedback="false">
-                  <n-input v-model:value="field.key" @blur="touchSurvey" />
+                  <n-input v-model:value="field.key" />
                 </n-form-item>
                 <n-form-item label="类型" :show-feedback="false">
-                  <n-select v-model:value="field.type" :options="fieldTypeOptions" @update:value="touchSurvey" />
+                  <n-select v-model:value="field.type" :options="fieldTypeOptions" />
                 </n-form-item>
                 <n-form-item label="占位文本" :show-feedback="false">
-                  <n-input v-model:value="field.placeholder" @blur="touchSurvey" />
+                  <n-input v-model:value="field.placeholder" />
                 </n-form-item>
                 <div class="field-row-full" style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
                   <n-space align="center" :size="12">
-                    <n-space align="center" :size="6"><n-switch v-model:value="field.required" size="small" @update:value="touchSurvey" /><span style="font-size: 13px">必填</span></n-space>
+                    <n-space align="center" :size="6"><n-switch v-model:value="field.required" size="small" /><span style="font-size: 13px">必填</span></n-space>
                     <n-button size="tiny" :disabled="index === 0" @click="moveField(field.id, -1)">上移</n-button>
-                    <n-button size="tiny" :disabled="index === survey.candidateFields.length - 1" @click="moveField(field.id, 1)">下移</n-button>
+                    <n-button size="tiny" :disabled="index === fieldDrafts.length - 1" @click="moveField(field.id, 1)">下移</n-button>
                   </n-space>
                   <n-button size="small" type="error" @click="removeField(field)">移除</n-button>
                 </div>
@@ -892,7 +1064,7 @@ const downloadFile = (name: string, content: string, type: string) => {
             <div class="admin-section-header">
               <div>
                 <h1>候选审核</h1>
-                <p>处理玩家提交的自定义服务器候选项。</p>
+                <p>处理所有问卷里的玩家投稿，不受当前问卷选择影响。</p>
               </div>
               <n-space :size="8">
                 <n-button :type="candidateFilter === 'pending' ? 'primary' : 'default'" size="small" @click="candidateFilter = 'pending'">待审核</n-button>
@@ -908,14 +1080,15 @@ const downloadFile = (name: string, content: string, type: string) => {
                 <div class="review-card-header">
                   <n-space align="center" :size="8">
                     <strong style="font-size: 16px">{{ c.title }}</strong>
+                    <n-tag type="info" size="small" :bordered="false">{{ surveyTitleById(c.surveyId) }}</n-tag>
                     <n-tag :type="statusTagType(c.status)" size="small" round>{{ statusLabel(c.status) }}</n-tag>
                   </n-space>
                   <span style="color: #94a3b8; font-size: 13px">{{ c.submitterName }} / {{ formatDate(c.createdAt) }}</span>
                 </div>
                 <div class="review-card-fields">
-                  <dl v-for="field in survey.candidateFields" :key="field.id" class="review-card-field">
+                  <dl v-for="field in candidateReviewFields(c)" :key="field.key" class="review-card-field">
                     <dt>{{ field.label }}</dt>
-                    <dd>{{ c.fields[field.key] || '未填' }}</dd>
+                    <dd>{{ field.value || '未填' }}</dd>
                   </dl>
                 </div>
                 <n-form-item label="审核备注" :show-feedback="false" style="margin-bottom: 12px">

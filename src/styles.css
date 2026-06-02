@@ -115,6 +115,25 @@ textarea {
   margin-top: 2px;
 }
 
+.candidate-card-stats {
+  margin-top: 8px;
+}
+
+.candidate-card-count {
+  flex-shrink: 0;
+  display: grid;
+  min-width: 52px;
+  justify-items: end;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.candidate-card-count strong {
+  color: #4f46e5;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .candidate-card.custom-card {
   border-style: dashed;
   border-color: #c7d2fe;
@@ -440,6 +459,10 @@ textarea {
     padding: 16px;
   }
 
+  .admin-section-header {
+    display: grid;
+  }
+
   .admin-two-col,
   .archive-grid,
   .modal-form-grid,
@@ -453,5 +476,9 @@ textarea {
 
   .survey-page {
     padding: 12px 8px 32px;
+  }
+
+  .candidate-card {
+    align-items: flex-start;
   }
 }
