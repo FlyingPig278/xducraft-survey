@@ -22,9 +22,11 @@ export interface SurveyDefinition {
   id: string
   title: string
   description: string
+  guideText: string
   status: SurveyStatus
   publicResults: boolean
   allowVoteEdits: boolean
+  requireLogin: boolean
   voteMode: VoteMode
   maxVotes: number
   candidateSubmission: {

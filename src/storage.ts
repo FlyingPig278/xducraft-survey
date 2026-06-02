@@ -8,7 +8,7 @@ import type {
   VoteRecord
 } from './types'
 
-const STATE_KEY = 'xducraft-survey-state-v2'
+const STATE_KEY = 'xducraft-survey-state-v3'
 const USER_KEY = 'xducraft-survey-current-user-v1'
 
 const now = () => new Date().toISOString()
@@ -30,9 +30,12 @@ const seedSurvey: SurveyDefinition = {
   id: 'survey-season-1',
   title: 'XDUCraft 下一期服务器方案投票',
   description: '请选择你愿意参与的服务器方案。',
+  guideText:
+    '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。',
   status: 'open',
   publicResults: true,
   allowVoteEdits: false,
+  requireLogin: true,
   voteMode: 'multiple',
   maxVotes: 3,
   candidateSubmission: {

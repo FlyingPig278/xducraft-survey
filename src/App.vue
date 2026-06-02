@@ -16,7 +16,7 @@ import type {
   VoteRecord
 } from './types'
 
-type AdminPanelKey = 'surveys' | 'fields' | 'candidates' | 'archive'
+type AdminPanelKey = 'surveys' | 'preview' | 'fields' | 'candidates' | 'archive'
 type CandidateFilter = CandidateStatus | 'all'
 type RouteState = { mode: 'survey'; surveyId: string } | { mode: 'admin'; panel: AdminPanelKey }
 
@@ -40,6 +40,11 @@ const voteConfirmOpen = ref(false)
 const candidateModalOpen = ref(false)
 const submittedSurveyId = ref('')
 const candidateFilter = ref<CandidateFilter>('pending')
+const draggedFieldId = ref('')
+
+const guestDraft = reactive({
+  gameId: ''
+})
 
 const loginDraft = reactive({
   displayName: 'Steve',
@@ -58,10 +63,13 @@ const newField = reactive({
 const surveyDraft = reactive({
   title: '',
   description: '',
+  guideText:
+    '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。',
   voteMode: 'multiple' as VoteMode,
   maxVotes: 3,
   publicResults: true,
   allowVoteEdits: false,
+  requireLogin: true,
   candidateSubmissionEnabled: true,
   candidateSubmissionRequiresReview: true,
   cloneCurrentFields: true
@@ -123,10 +131,15 @@ const defaultCandidateFieldTemplates: Array<Omit<FieldDefinition, 'id'>> = [
 
 const adminPanels: Array<{ key: AdminPanelKey; label: string }> = [
   { key: 'surveys', label: '问卷' },
+  { key: 'preview', label: '预览' },
   { key: 'fields', label: '字段' },
   { key: 'candidates', label: '审核' },
   { key: 'archive', label: '留档' }
 ]
+
+const DEVICE_KEY = 'xducraft-survey-device-id-v1'
+const defaultGuideText =
+  '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。'
 
 const parseHash = (value: string): RouteState => {
   const clean = value.replace(/^#\/?/, '')
@@ -173,9 +186,19 @@ const pendingCandidateCount = computed(
   () => appState.value.candidates.filter((candidate) => candidate.status === 'pending').length
 )
 const voteLimit = computed(() => (survey.value.voteMode === 'single' ? 1 : Math.max(1, survey.value.maxVotes || 1)))
+const getDeviceId = () => {
+  let value = localStorage.getItem(DEVICE_KEY)
+  if (!value) {
+    value = createId('device')
+    localStorage.setItem(DEVICE_KEY, value)
+  }
+  return value
+}
+const anonymousUserId = computed(() => `anon-${getDeviceId()}`)
+const effectiveUserId = computed(() => currentUser.value?.id ?? anonymousUserId.value)
 const currentVote = computed(() => {
-  if (!currentUser.value) return null
-  return surveyVotes.value.find((vote) => vote.userId === currentUser.value?.id) ?? null
+  if (survey.value.requireLogin && !currentUser.value) return null
+  return surveyVotes.value.find((vote) => vote.userId === effectiveUserId.value) ?? null
 })
 const approvedCandidateIds = computed(() => new Set(approvedCandidates.value.map((candidate) => candidate.id)))
 const selectedCandidates = computed(() =>
@@ -220,6 +243,8 @@ const publicSurveyUrl = computed(() => `${window.location.origin}${window.locati
 const publicSurveyQrUrl = computed(
   () => `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicSurveyUrl.value)}`
 )
+const surveyGuideText = computed(() => survey.value.guideText || defaultGuideText)
+const surveyHasVotes = computed(() => surveyVotes.value.length > 0)
 
 const navigateSurvey = (surveyId: string) => {
   window.location.hash = `#/s/${surveyId}`
@@ -402,11 +427,38 @@ const loginAs = (role: UserRole) => {
   syncSelectionFromVote()
 }
 
+const startOAuthLogin = (role: UserRole = 'player') => {
+  loginAs(role)
+}
+
 const logout = () => {
   currentUser.value = null
   saveUser(null)
   statusMessage.value = '已退出登录。'
 }
+
+const anonymousGameId = () => guestDraft.gameId.trim()
+
+const hasVoteIdentity = () => {
+  if (survey.value.requireLogin) {
+    if (!currentUser.value) {
+      startOAuthLogin('player')
+      statusMessage.value = '已进入 mock OAuth 登录，请再次确认操作。'
+      return false
+    }
+    return true
+  }
+
+  if (currentUser.value) return true
+  if (!anonymousGameId()) {
+    statusMessage.value = '请填写游戏昵称用于留档。'
+    return false
+  }
+  return true
+}
+
+const currentActorName = () => currentUser.value?.displayName ?? (anonymousGameId() || '匿名玩家')
+const currentGameId = () => currentUser.value?.gameId ?? anonymousGameId()
 
 const isSelected = (candidateId: string) => selectedCandidateIds.value.includes(candidateId)
 
@@ -439,10 +491,7 @@ const toggleCandidate = (candidateId: string) => {
 
 const openVoteConfirm = () => {
   statusMessage.value = ''
-  if (!currentUser.value) {
-    statusMessage.value = '请先登录后提交投票。'
-    return
-  }
+  if (!hasVoteIdentity()) return
   if (survey.value.status !== 'open') {
     statusMessage.value = '当前问卷不在开放投票状态。'
     return
@@ -458,8 +507,18 @@ const openVoteConfirm = () => {
   voteConfirmOpen.value = true
 }
 
+const openCandidateModal = () => {
+  submissionMessage.value = ''
+  if (survey.value.requireLogin && !currentUser.value) {
+    startOAuthLogin('player')
+    statusMessage.value = '已进入 mock OAuth 登录，请再次打开自定义表单。'
+    return
+  }
+  candidateModalOpen.value = true
+}
+
 const confirmSubmitVote = () => {
-  if (!currentUser.value) return
+  if (!hasVoteIdentity()) return
   const validSelection = selectedCandidateIds.value.filter((candidateId) =>
     approvedCandidateIds.value.has(candidateId)
   )
@@ -474,21 +533,21 @@ const confirmSubmitVote = () => {
     })
     currentVote.value.candidateIds = [...selectedCandidateIds.value]
     currentVote.value.updatedAt = timestamp
-    addAudit('vote.updated', `${currentUser.value.displayName} 修改了「${survey.value.title}」的投票`)
+    addAudit('vote.updated', `${currentActorName()} 修改了「${survey.value.title}」的投票`)
   } else {
     const vote: VoteRecord = {
       id: createId('vote'),
       surveyId: survey.value.id,
-      userId: currentUser.value.id,
-      userName: currentUser.value.displayName,
-      gameId: currentUser.value.gameId,
+      userId: effectiveUserId.value,
+      userName: currentActorName(),
+      gameId: currentGameId(),
       candidateIds: [...selectedCandidateIds.value],
       createdAt: timestamp,
       updatedAt: timestamp,
       history: []
     }
     appState.value.votes.push(vote)
-    addAudit('vote.created', `${currentUser.value.displayName} 提交了「${survey.value.title}」的投票`)
+    addAudit('vote.created', `${currentActorName()} 提交了「${survey.value.title}」的投票`)
   }
 
   voteConfirmOpen.value = false
@@ -498,8 +557,8 @@ const confirmSubmitVote = () => {
 
 const submitCandidate = () => {
   submissionMessage.value = ''
-  if (!currentUser.value) {
-    submissionMessage.value = '请先登录后提交候选项。'
+  if (!hasVoteIdentity()) {
+    submissionMessage.value = survey.value.requireLogin ? '已进入 mock OAuth 登录，请再次提交。' : '请填写游戏昵称用于留档。'
     return
   }
   if (survey.value.status !== 'open' || !survey.value.candidateSubmission.enabled) {
@@ -545,14 +604,14 @@ const submitCandidate = () => {
     title,
     status,
     fields: { ...submissionValues.value },
-    submitterUserId: currentUser.value.id,
-    submitterName: currentUser.value.displayName,
+    submitterUserId: effectiveUserId.value,
+    submitterName: currentActorName(),
     createdAt: timestamp,
     reviewedAt: status === 'approved' ? timestamp : undefined,
     reviewerName: status === 'approved' ? 'Auto Review' : undefined
   }
   appState.value.candidates.unshift(candidate)
-  addAudit('candidate.submitted', `${currentUser.value.displayName} 投稿了「${title}」`)
+  addAudit('candidate.submitted', `${currentActorName()} 投稿了「${title}」`)
   resetSubmissionValues()
   submissionMessage.value = status === 'pending' ? '候选项已提交，等待管理员审核。' : '候选项已进入投票列表。'
 }
@@ -629,6 +688,33 @@ const removeField = (field: FieldDefinition) => {
   addAudit('survey.field_removed', `移除了「${survey.value.title}」投稿字段「${field.label}」`)
 }
 
+const moveField = (fieldId: string, offset: number) => {
+  const fields = [...survey.value.candidateFields]
+  const index = fields.findIndex((field) => field.id === fieldId)
+  const nextIndex = index + offset
+  if (index < 0 || nextIndex < 0 || nextIndex >= fields.length) return
+  const [field] = fields.splice(index, 1)
+  fields.splice(nextIndex, 0, field)
+  survey.value.candidateFields = fields
+  touchSurvey()
+}
+
+const dropFieldBefore = (targetFieldId: string) => {
+  const sourceFieldId = draggedFieldId.value
+  draggedFieldId.value = ''
+  if (!sourceFieldId || sourceFieldId === targetFieldId) return
+
+  const fields = [...survey.value.candidateFields]
+  const sourceIndex = fields.findIndex((field) => field.id === sourceFieldId)
+  const targetIndex = fields.findIndex((field) => field.id === targetFieldId)
+  if (sourceIndex < 0 || targetIndex < 0) return
+
+  const [field] = fields.splice(sourceIndex, 1)
+  fields.splice(sourceIndex < targetIndex ? targetIndex - 1 : targetIndex, 0, field)
+  survey.value.candidateFields = fields
+  touchSurvey()
+}
+
 const updateFieldOptions = (field: FieldDefinition, value: string) => {
   field.options = value
     .split('\n')
@@ -658,9 +744,11 @@ const createSurvey = () => {
     id: createId('survey'),
     title,
     description: surveyDraft.description.trim() || '请选择你愿意参与的服务器方案。',
+    guideText: surveyDraft.guideText.trim() || defaultGuideText,
     status: 'draft',
     publicResults: surveyDraft.publicResults,
     allowVoteEdits: surveyDraft.allowVoteEdits,
+    requireLogin: surveyDraft.requireLogin,
     voteMode: surveyDraft.voteMode,
     maxVotes: Math.max(1, Number(surveyDraft.maxVotes) || 1),
     candidateSubmission: {
@@ -676,7 +764,9 @@ const createSurvey = () => {
   adminSurveyId.value = nextSurvey.id
   surveyDraft.title = ''
   surveyDraft.description = ''
+  surveyDraft.guideText = defaultGuideText
   addAudit('survey.created', `${currentUser.value.displayName} 创建了问卷「${nextSurvey.title}」`)
+  adminMessage.value = `问卷「${nextSurvey.title}」已创建，可在预览页检查后发布。`
   navigateAdmin('surveys')
 }
 
@@ -755,31 +845,28 @@ const downloadFile = (filename: string, content: string, type: string) => {
 
 <template>
   <main v-if="!isAdminRoute" class="survey-page">
+    <header class="public-topbar">
+      <strong>XDUCraft Vote</strong>
+      <div v-if="currentUser" class="topbar-user">
+        <span>{{ currentUser.displayName }}</span>
+        <small>{{ currentUser.gameId }}</small>
+        <button type="button" @click="logout">退出</button>
+      </div>
+      <button v-else class="button-ghost" type="button" @click="startOAuthLogin('player')">登录</button>
+    </header>
+
     <section class="survey-card">
       <header class="survey-header">
-        <p class="brand-line">XDUCraft Vote</p>
         <h1>{{ survey.title }}</h1>
-        <p class="guide-text">
-          请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。
-        </p>
+        <p class="guide-text">{{ surveyGuideText }}</p>
       </header>
 
-      <section class="login-strip" aria-label="登录信息">
-        <div v-if="currentUser" class="user-pill">
-          <span>{{ currentUser.displayName }}</span>
-          <small>{{ currentUser.gameId }}</small>
-          <button type="button" @click="logout">退出</button>
-        </div>
-        <form v-else class="login-strip-form" @submit.prevent="loginAs('player')">
+      <section v-if="!survey.requireLogin && !currentUser" class="guest-strip" aria-label="匿名填写信息">
+        <form class="guest-strip-form" @submit.prevent>
           <label>
-            <span>显示名</span>
-            <input v-model="loginDraft.displayName" type="text" />
+            <span>游戏昵称</span>
+            <input v-model="guestDraft.gameId" type="text" placeholder="用于留档和本地去重" />
           </label>
-          <label>
-            <span>游戏 ID</span>
-            <input v-model="loginDraft.gameId" type="text" />
-          </label>
-          <button class="button-primary" type="submit">登录</button>
         </form>
       </section>
 
@@ -818,7 +905,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
           </span>
         </button>
 
-        <button class="choice-row custom-choice" type="button" @click="candidateModalOpen = true">
+        <button class="choice-row custom-choice" type="button" @click="openCandidateModal">
           <span class="choice-control">+</span>
           <span class="choice-main">
             <strong>自定义，请填写表单</strong>
@@ -955,6 +1042,10 @@ const downloadFile = (filename: string, content: string, type: string) => {
                 <span>说明</span>
                 <textarea v-model="surveyDraft.description" rows="3" placeholder="请选择你愿意参与的服务器方案。"></textarea>
               </label>
+              <label>
+                <span>答题指引</span>
+                <textarea v-model="surveyDraft.guideText" rows="3"></textarea>
+              </label>
               <div class="form-grid">
                 <label>
                   <span>模式</span>
@@ -968,6 +1059,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
                   <input v-model.number="surveyDraft.maxVotes" min="1" type="number" />
                 </label>
               </div>
+              <label class="check-line"><input v-model="surveyDraft.requireLogin" type="checkbox" /> 强制要求登录</label>
               <label class="check-line"><input v-model="surveyDraft.publicResults" type="checkbox" /> 提交后显示结果</label>
               <label class="check-line"><input v-model="surveyDraft.allowVoteEdits" type="checkbox" /> 允许投票后修改</label>
               <label class="check-line"><input v-model="surveyDraft.candidateSubmissionEnabled" type="checkbox" /> 开放自定义候选项</label>
@@ -999,6 +1091,20 @@ const downloadFile = (filename: string, content: string, type: string) => {
                 <span>说明</span>
                 <textarea v-model="survey.description" rows="3" @change="touchSurvey"></textarea>
               </label>
+              <label>
+                <span>答题指引</span>
+                <textarea v-model="survey.guideText" rows="3" @change="touchSurvey"></textarea>
+              </label>
+              <div class="setting-list">
+                <label class="check-line"><input v-model="survey.requireLogin" type="checkbox" @change="touchSurvey" /> 强制要求登录</label>
+                <label class="check-line"><input v-model="survey.publicResults" type="checkbox" @change="touchSurvey" /> 提交后显示结果</label>
+                <label class="check-line"><input v-model="survey.allowVoteEdits" type="checkbox" @change="touchSurvey" /> 允许投票后修改</label>
+                <label class="check-line"><input v-model="survey.candidateSubmission.enabled" type="checkbox" @change="touchSurvey" /> 开放自定义候选项</label>
+                <label class="check-line"><input v-model="survey.candidateSubmission.requiresReview" type="checkbox" @change="touchSurvey" /> 自定义候选项需要审核</label>
+              </div>
+              <p v-if="surveyHasVotes" class="inline-message">
+                该问卷已有 {{ surveyVotes.length }} 条投票。修改规则会影响之后的提交，历史投票仍保留原始记录。
+              </p>
               <div class="share-box">
                 <strong>发布链接</strong>
                 <code>{{ publicSurveyUrl }}</code>
@@ -1009,16 +1115,83 @@ const downloadFile = (filename: string, content: string, type: string) => {
           </div>
         </section>
 
+        <section v-if="adminPanel === 'preview'" class="admin-card">
+          <header class="admin-section-head">
+            <div>
+              <h1>发布预览</h1>
+              <p>预览玩家通过公开链接打开时看到的答题页。</p>
+            </div>
+            <button class="button-primary" type="button" @click="navigateSurvey(survey.id)">打开公开链接</button>
+          </header>
+
+          <div class="preview-frame">
+            <section class="survey-card preview-card">
+              <header class="survey-header">
+                <h1>{{ survey.title }}</h1>
+                <p class="guide-text">{{ surveyGuideText }}</p>
+              </header>
+              <section class="choice-list" aria-label="预览候选项">
+                <div v-for="candidate in approvedCandidates" :key="candidate.id" class="choice-row preview-choice">
+                  <span class="choice-control"></span>
+                  <span class="choice-main">
+                    <strong>{{ candidate.title }}</strong>
+                    <small>{{ candidateMeta(candidate) || '未填写补充信息' }}</small>
+                  </span>
+                </div>
+                <div class="choice-row custom-choice preview-choice">
+                  <span class="choice-control">+</span>
+                  <span class="choice-main">
+                    <strong>自定义，请填写表单</strong>
+                    <small>新增候选项会进入审核，通过后可被投票。</small>
+                  </span>
+                </div>
+              </section>
+              <footer class="submit-bar">
+                <p>0 / {{ voteLimit }} 已选</p>
+                <button class="button-primary" type="button">提交</button>
+              </footer>
+            </section>
+          </div>
+        </section>
+
         <section v-if="adminPanel === 'fields'" class="admin-card">
           <header class="admin-section-head">
             <div>
-              <h1>投稿字段</h1>
-              <p>配置玩家提交自定义候选项时需要填写的内容。</p>
+              <h1>当前问卷字段</h1>
+              <p>字段属于当前问卷，可拖拽排序。新问卷可以复制当前字段，也可以从默认字段开始。</p>
             </div>
+            <label class="compact-select">
+              <span>问卷</span>
+              <select v-model="adminSurveyId">
+                <option v-for="item in surveys" :key="item.id" :value="item.id">{{ item.title }}</option>
+              </select>
+            </label>
           </header>
 
           <div class="field-list">
-            <article v-for="field in survey.candidateFields" :key="field.id" class="field-row">
+            <article
+              v-for="(field, index) in survey.candidateFields"
+              :key="field.id"
+              class="field-row"
+              draggable="true"
+              @dragstart="draggedFieldId = field.id"
+              @dragover.prevent
+              @drop="dropFieldBefore(field.id)"
+            >
+              <div class="drag-cell" aria-label="排序">
+                <span>拖拽</span>
+                <div>
+                  <button class="mini-icon-button" type="button" :disabled="index === 0" @click="moveField(field.id, -1)">↑</button>
+                  <button
+                    class="mini-icon-button"
+                    type="button"
+                    :disabled="index === survey.candidateFields.length - 1"
+                    @click="moveField(field.id, 1)"
+                  >
+                    ↓
+                  </button>
+                </div>
+              </div>
               <label>
                 <span>名称</span>
                 <input v-model="field.label" type="text" @change="touchSurvey" />
