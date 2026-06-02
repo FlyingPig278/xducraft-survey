@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "api": "node server/index.mjs",
+    "dev": "node server/dev.mjs",
+    "dev:vite": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "serve": "node server/index.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.3",

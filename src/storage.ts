@@ -4,12 +4,10 @@ import type {
   Candidate,
   FieldDefinition,
   MockUser,
-  ResultVisibility,
   SurveyDefinition,
   VoteRecord
 } from './types'
 
-const STATE_KEY = 'xducraft-survey-state-v3'
 const USER_KEY = 'xducraft-survey-current-user-v1'
 
 const now = () => new Date().toISOString()
@@ -23,11 +21,6 @@ const field = (
   placeholder = '',
   options?: string[]
 ): FieldDefinition => ({ id, key, label, type, required, placeholder, options })
-
-type PersistedSurvey = Omit<SurveyDefinition, 'resultVisibility'> & {
-  resultVisibility?: ResultVisibility
-  publicResults?: boolean
-}
 
 export const createId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -208,50 +201,6 @@ export const createSeedState = (): AppState => ({
   votes: seedVotes.map((item) => ({ ...item, candidateIds: [...item.candidateIds], history: [] })),
   auditLogs: [...seedLogs]
 })
-
-const normalizeSurvey = (survey: PersistedSurvey): SurveyDefinition => {
-  const { publicResults, resultVisibility, ...rest } = survey
-  return {
-    ...rest,
-    resultVisibility: resultVisibility ?? (publicResults ? 'always' : 'hidden'),
-    maxVotes: Math.max(1, Number(survey.maxVotes) || 1),
-    candidateSubmission: survey.candidateSubmission ?? { enabled: true, requiresReview: true },
-    candidateFields: (survey.candidateFields ?? []).map((item) => ({
-      ...item,
-      options: item.options ? [...item.options] : undefined
-    }))
-  }
-}
-
-const normalizeState = (state: AppState): AppState => ({
-  surveys: (state.surveys ?? []).map((survey) => normalizeSurvey(survey as PersistedSurvey)),
-  candidates: state.candidates ?? [],
-  votes: state.votes ?? [],
-  auditLogs: state.auditLogs ?? []
-})
-
-export const loadState = (): AppState => {
-  const raw = localStorage.getItem(STATE_KEY)
-  if (!raw) {
-    const seeded = createSeedState()
-    saveState(seeded)
-    return seeded
-  }
-
-  try {
-    const state = normalizeState(JSON.parse(raw) as AppState)
-    saveState(state)
-    return state
-  } catch {
-    const seeded = createSeedState()
-    saveState(seeded)
-    return seeded
-  }
-}
-
-export const saveState = (state: AppState) => {
-  localStorage.setItem(STATE_KEY, JSON.stringify(state))
-}
 
 export const loadUser = (): MockUser | null => {
   const raw = localStorage.getItem(USER_KEY)

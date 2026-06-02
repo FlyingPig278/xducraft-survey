@@ -22,10 +22,10 @@ import {
   zhCN,
   dateZhCN
 } from 'naive-ui'
-import { createId, createSeedState, loadState, loadUser, saveState, saveUser } from './storage'
+import { surveyApi } from './api'
+import { createId, createSeedState, loadUser, saveUser } from './storage'
 import type {
   AppState,
-  AuditLog,
   Candidate,
   CandidateStatus,
   FieldDefinition,
@@ -51,10 +51,12 @@ interface ResultRow {
 
 const { message } = createDiscreteApi(['message'])
 
-const appState = ref<AppState>(loadState())
+const appState = ref<AppState>(createSeedState())
 const currentUser = ref<MockUser | null>(loadUser())
 const hash = ref(window.location.hash)
 const adminSurveyId = ref(appState.value.surveys[0]?.id ?? '')
+const apiLoading = ref(true)
+const apiError = ref('')
 const selectedCandidateIds = ref<string[]>([])
 const statusMessage = ref('')
 const submissionMessage = ref('')
@@ -241,11 +243,35 @@ const publicSurveyUrlFor = (id: string) => `${window.location.origin}${window.lo
 const navigateSurvey = (id: string) => { window.location.hash = `#/s/${id}` }
 const navigateAdmin = (panel: AdminPanelKey) => { window.location.hash = `#/admin/${panel}` }
 const openPublicSurvey = (id = survey.value.id) => { window.open(publicSurveyUrlFor(id), '_blank', 'noopener,noreferrer') }
-const persist = () => { saveState(appState.value) }
+const loadAppState = async () => {
+  apiLoading.value = true
+  apiError.value = ''
+  try {
+    appState.value = await surveyApi.getState()
+    adminSurveyId.value = appState.value.surveys.some((item) => item.id === adminSurveyId.value)
+      ? adminSurveyId.value
+      : appState.value.surveys[0]?.id ?? ''
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : '无法连接 API 服务'
+    message.error('无法连接 API 服务，请确认后端已启动。')
+  } finally {
+    apiLoading.value = false
+  }
+}
+
+const persist = async () => {
+  apiError.value = ''
+  try {
+    appState.value = await surveyApi.saveState(appState.value)
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : '保存失败'
+    message.error('保存失败，请检查 API 服务。')
+  }
+}
 
 const addAudit = (action: string, detail: string, actor = currentUser.value?.displayName ?? 'System') => {
   appState.value.auditLogs.unshift({ id: createId('log'), action, actor, detail, createdAt: new Date().toISOString() })
-  persist()
+  void persist()
 }
 
 const formatDate = (value?: string) => {
@@ -340,6 +366,7 @@ const handleHashChange = () => { hash.value = window.location.hash }
 onMounted(() => {
   window.addEventListener('hashchange', handleHashChange)
   if (!window.location.hash) navigateSurvey(appState.value.surveys[0]?.id ?? '')
+  void loadAppState()
 })
 onBeforeUnmount(() => { window.removeEventListener('hashchange', handleHashChange) })
 
@@ -359,17 +386,20 @@ watch(() => approvedCandidates.value.map((c) => c.id).join('|'), () => {
   selectedCandidateIds.value = selectedCandidateIds.value.filter((id) => approvedCandidateIds.value.has(id))
 })
 
-const loginAs = (role: UserRole) => {
+const loginAs = async (role: UserRole) => {
   const displayName = loginDraft.displayName.trim() || loginDraft.gameId.trim() || 'Player'
   const gameId = loginDraft.gameId.trim() || displayName
-  const normalizedId = normalize(gameId).replace(/[^a-z0-9_:-]/g, '-') || createId('user')
-  currentUser.value = { id: role === 'admin' ? 'mock-admin' : `mock-${normalizedId}`, displayName: role === 'admin' ? `${displayName} 管理员` : displayName, gameId, role }
-  saveUser(currentUser.value)
-  message.success(role === 'admin' ? '已切换为管理员身份' : '已登录')
-  syncSelectionFromVote()
+  try {
+    currentUser.value = await surveyApi.mockLogin({ displayName, gameId, role })
+    saveUser(currentUser.value)
+    message.success(role === 'admin' ? '已切换为管理员身份' : '已登录')
+    syncSelectionFromVote()
+  } catch {
+    message.error('登录失败，请确认 API 服务已启动。')
+  }
 }
 
-const startOAuthLogin = (role: UserRole = 'player') => { loginAs(role) }
+const startOAuthLogin = (role: UserRole = 'player') => { void loginAs(role) }
 
 const logout = () => { currentUser.value = null; saveUser(null); message.info('已退出登录') }
 
@@ -585,16 +615,19 @@ const createSurvey = () => {
   navigateAdmin('fields')
 }
 
-const resetDemo = () => {
-  appState.value = createSeedState()
-  adminSurveyId.value = appState.value.surveys[0]?.id ?? ''
-  saveState(appState.value)
-  if (!isAdminRoute.value) navigateSurvey(appState.value.surveys[0]?.id ?? '')
-  else navigateAdmin('surveys')
-  syncSurveySettingsDraft()
-  syncFieldDrafts()
-  initSubmissionValues(); syncSelectionFromVote()
-  message.success('演示数据已重置')
+const resetDemo = async () => {
+  try {
+    appState.value = await surveyApi.resetState()
+    adminSurveyId.value = appState.value.surveys[0]?.id ?? ''
+    if (!isAdminRoute.value) navigateSurvey(appState.value.surveys[0]?.id ?? '')
+    else navigateAdmin('surveys')
+    syncSurveySettingsDraft()
+    syncFieldDrafts()
+    initSubmissionValues(); syncSelectionFromVote()
+    message.success('演示数据已重置')
+  } catch {
+    message.error('重置失败，请确认 API 服务已启动。')
+  }
 }
 
 const copyPublicLink = async () => {
@@ -637,6 +670,12 @@ const downloadFile = (name: string, content: string, type: string) => {
       </header>
 
       <div class="survey-container">
+        <n-alert v-if="apiError" type="error" :bordered="false" style="margin-bottom: 16px">
+          API 连接失败：{{ apiError }}
+        </n-alert>
+        <n-alert v-else-if="apiLoading" type="info" :bordered="false" style="margin-bottom: 16px">
+          正在同步问卷数据...
+        </n-alert>
         <n-card>
           <template #header>
             <n-space align="center" :size="12">
@@ -812,6 +851,12 @@ const downloadFile = (name: string, content: string, type: string) => {
       </aside>
 
       <section class="admin-main">
+        <n-alert v-if="apiError" type="error" :bordered="false" style="margin-bottom: 16px">
+          API 连接失败：{{ apiError }}
+        </n-alert>
+        <n-alert v-else-if="apiLoading" type="info" :bordered="false" style="margin-bottom: 16px">
+          正在同步后台数据...
+        </n-alert>
         <!-- Admin login -->
         <div v-if="!isAdmin" class="admin-content" style="max-width: 440px">
           <n-card title="管理员登录">
