@@ -8,7 +8,7 @@ import type {
   VoteRecord
 } from './types'
 
-const STATE_KEY = 'xducraft-survey-state-v1'
+const STATE_KEY = 'xducraft-survey-state-v2'
 const USER_KEY = 'xducraft-survey-current-user-v1'
 
 const now = () => new Date().toISOString()
@@ -29,11 +29,10 @@ export const createId = (prefix: string) =>
 const seedSurvey: SurveyDefinition = {
   id: 'survey-season-1',
   title: 'XDUCraft 下一期服务器方案投票',
-  description:
-    '玩家可以查看实时匿名票数，登录后投票，也可以提交新的整合包/服务器候选项。候选项通过审核后进入投票列表。',
+  description: '请选择你愿意参与的服务器方案。',
   status: 'open',
   publicResults: true,
-  allowVoteEdits: true,
+  allowVoteEdits: false,
   voteMode: 'multiple',
   maxVotes: 3,
   candidateSubmission: {
