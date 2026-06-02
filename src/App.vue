@@ -698,10 +698,9 @@ const downloadFile = (filename: string, content: string, type: string) => {
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark">XD</div>
         <div>
-          <p class="eyebrow">XDUCraft Survey</p>
-          <h1>社区问卷与服务器投票</h1>
+          <h1>XDUCraft Vote</h1>
+          <span>{{ survey.title }}</span>
         </div>
       </div>
 
@@ -729,12 +728,18 @@ const downloadFile = (filename: string, content: string, type: string) => {
 
         <div v-if="currentUser" class="player-user">
           <span>{{ currentUser.displayName }}</span>
-          <small>{{ currentUser.gameId }} · {{ currentUser.role }}</small>
+          <small>{{ currentUser.gameId }} / {{ currentUser.role }}</small>
           <button class="ghost" type="button" @click="logout">退出</button>
         </div>
         <form v-else class="player-login" @submit.prevent="loginAs('player')">
-          <input v-model="loginDraft.displayName" type="text" aria-label="显示名" placeholder="显示名" />
-          <input v-model="loginDraft.gameId" type="text" aria-label="游戏 ID" placeholder="游戏 ID" />
+          <label class="mini-field">
+            <span>显示名</span>
+            <input v-model="loginDraft.displayName" type="text" placeholder="Steve" />
+          </label>
+          <label class="mini-field">
+            <span>游戏 ID</span>
+            <input v-model="loginDraft.gameId" type="text" placeholder="Steve" />
+          </label>
           <button class="primary" type="submit">登录</button>
           <button class="ghost" type="button" @click="loginAs('admin')">管理员</button>
         </form>
@@ -783,7 +788,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
                 <strong>{{ row.candidate.title }}</strong>
                 <small>
                   <template v-for="(field, index) in summaryFields.slice(0, 3)" :key="field.id">
-                    <span v-if="index > 0"> · </span>{{ row.candidate.fields[field.key] || '未填' }}
+                    <span v-if="index > 0"> / </span>{{ row.candidate.fields[field.key] || '未填' }}
                   </template>
                 </small>
               </div>
@@ -828,7 +833,6 @@ const downloadFile = (filename: string, content: string, type: string) => {
       <section v-if="activeTab === 'submit'" class="submit-drawer">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">Candidate Submission</p>
             <h2>新增候选项</h2>
           </div>
           <span class="state-label">
@@ -910,7 +914,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
             >
               <span>{{ item.title }}</span>
               <small>
-                {{ statusLabel(item.status) }} ·
+                {{ statusLabel(item.status) }} /
                 {{ appState.candidates.filter((candidate) => candidate.surveyId === item.id).length }} 候选
               </small>
             </button>
@@ -927,7 +931,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
 
           <div v-if="currentUser" class="current-user">
             <strong>{{ currentUser.displayName }}</strong>
-            <span>{{ currentUser.gameId }} · {{ currentUser.role }}</span>
+            <span>{{ currentUser.gameId }} / {{ currentUser.role }}</span>
             <button class="ghost full" type="button" @click="logout">退出登录</button>
           </div>
           <form v-else class="login-form" @submit.prevent="loginAs('player')">
@@ -955,7 +959,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
             <li v-for="log in appState.auditLogs.slice(0, 6)" :key="log.id">
               <span>{{ log.action }}</span>
               <strong>{{ log.detail }}</strong>
-              <small>{{ log.actor }} · {{ formatDate(log.createdAt) }}</small>
+              <small>{{ log.actor }} / {{ formatDate(log.createdAt) }}</small>
             </li>
           </ul>
         </section>
@@ -1376,7 +1380,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
                       <h3>{{ candidate.title }}</h3>
                       <span class="state-label" :class="candidate.status">{{ statusLabel(candidate.status) }}</span>
                     </div>
-                    <p class="muted">投稿人：{{ candidate.submitterName }} · {{ formatDate(candidate.createdAt) }}</p>
+                    <p class="muted">投稿人：{{ candidate.submitterName }} / {{ formatDate(candidate.createdAt) }}</p>
                     <div class="candidate-meta">
                       <span v-for="field in survey.candidateFields" :key="field.id">
                         {{ field.label }}：{{ candidate.fields[field.key] || '未填' }}
@@ -1438,7 +1442,7 @@ const downloadFile = (filename: string, content: string, type: string) => {
                   <ul class="record-list">
                     <li v-for="vote in surveyVotes" :key="vote.id">
                       <strong>{{ vote.userName }}</strong>
-                      <span>{{ vote.candidateIds.length }} 项 · {{ formatDate(vote.updatedAt) }}</span>
+                      <span>{{ vote.candidateIds.length }} 项 / {{ formatDate(vote.updatedAt) }}</span>
                     </li>
                   </ul>
                 </div>
@@ -1447,13 +1451,13 @@ const downloadFile = (filename: string, content: string, type: string) => {
                   <ul class="record-list">
                     <li v-for="candidate in surveyCandidates" :key="candidate.id">
                       <strong>{{ candidate.title }}</strong>
-                      <span>{{ statusLabel(candidate.status) }} · {{ candidateCounts.get(candidate.id) ?? 0 }} 票</span>
+                      <span>{{ statusLabel(candidate.status) }} / {{ candidateCounts.get(candidate.id) ?? 0 }} 票</span>
                     </li>
                   </ul>
                 </div>
               </div>
 
-              <p v-if="latestVote" class="message">最近投票更新：{{ latestVote.userName }} · {{ formatDate(latestVote.updatedAt) }}</p>
+              <p v-if="latestVote" class="message">最近投票更新：{{ latestVote.userName }} / {{ formatDate(latestVote.updatedAt) }}</p>
             </section>
           </template>
         </section>
