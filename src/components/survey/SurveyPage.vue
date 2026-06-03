@@ -8,6 +8,7 @@ import { useRouter } from '../../composables/useRouter'
 import { useSurveyVote } from '../../composables/useSurveyVote'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
 import { useCandidateFields, statusLabel, statusTagType } from '../../composables/useCandidateFields'
+import { formatSurveyWindow, getSurveyAvailability } from '../../composables/useSurveyAvailability'
 import CandidateCard from './CandidateCard.vue'
 import ResultsView from './ResultsView.vue'
 import VoteConfirmModal from './VoteConfirmModal.vue'
@@ -39,12 +40,17 @@ const canViewResultsAfterVote = computed(() =>
   survey.value.resultVisibility === 'always' ||
   (survey.value.resultVisibility === 'after_vote' && showSubmissionSummary.value)
 )
+const surveyAvailability = computed(() => getSurveyAvailability(survey.value))
+const canSubmitSurvey = computed(() => surveyAvailability.value.canSubmit)
+const availabilityAlertType = computed(() => surveyAvailability.value.reason === 'draft' || surveyAvailability.value.reason === 'not_started' ? 'info' : 'warning')
 
 const surveyRuleHints = computed(() => {
   const resultHint = survey.value.resultVisibility === 'always' ? '提交前可查看票数' : survey.value.resultVisibility === 'after_vote' ? '投票后可查看票数' : '票数不向玩家公开'
   const editHint = survey.value.allowVoteEdits ? '提交后可修改' : '提交后不可修改'
   const identityHint = survey.value.requireLogin ? '需要登录提交' : '免登录填写'
   const hints = [resultHint, editHint, identityHint]
+  const windowHint = formatSurveyWindow(survey.value)
+  if (windowHint) hints.push(windowHint)
   if (survey.value.candidateSubmission.enabled) {
     hints.push(survey.value.candidateSubmission.requiresReview ? '提交后进入审核，通过后可被投票' : '提交后直接加入投票列表')
   }
@@ -55,8 +61,6 @@ const customCandidateHint = computed(() =>
   survey.value.candidateSubmission.requiresReview ? '提交后进入审核，通过后可被投票' : '提交后直接加入投票列表'
 )
 
-const isClosed = computed(() => survey.value.status === 'closed')
-const isDraft = computed(() => survey.value.status === 'draft')
 const openAdminPanel = () => { navigateAdmin('surveys') }
 </script>
 
@@ -110,12 +114,8 @@ const openAdminPanel = () => { navigateAdmin('surveys') }
           <n-tag v-else size="small" :bordered="false">最多 {{ voteLimit }} 项</n-tag>
         </template>
 
-        <!-- Closed / Draft overlay -->
-        <n-alert v-if="isClosed" type="warning" :bordered="false" style="margin-bottom: 16px">
-          投票已结束，感谢参与。
-        </n-alert>
-        <n-alert v-if="isDraft" type="info" :bordered="false" style="margin-bottom: 16px">
-          问卷尚未开放，请等待管理员发布。
+        <n-alert v-if="!canSubmitSurvey" :type="availabilityAlertType" :bordered="false" style="margin-bottom: 16px">
+          {{ surveyAvailability.message }}
         </n-alert>
 
         <p style="color: #64748b; margin: 0 0 10px; line-height: 1.6">{{ surveyGuideText }}</p>
@@ -132,7 +132,7 @@ const openAdminPanel = () => { navigateAdmin('surveys') }
             style="padding: 16px 0"
           />
           <ResultsView />
-          <n-space v-if="survey.allowVoteEdits && survey.status === 'open'" justify="end" style="margin-top: 18px">
+          <n-space v-if="survey.allowVoteEdits && canSubmitSurvey" justify="end" style="margin-top: 18px">
             <n-button type="primary" @click="editingVote = true">修改投票</n-button>
           </n-space>
         </template>
@@ -160,6 +160,7 @@ const openAdminPanel = () => { navigateAdmin('surveys') }
             <div
               v-if="survey.candidateSubmission.enabled"
               class="candidate-card custom-card"
+              :class="{ disabled: !canSubmitSurvey }"
               @click="openCandidateModal"
             >
               <div class="candidate-card-check candidate-card-plus">
@@ -176,7 +177,7 @@ const openAdminPanel = () => { navigateAdmin('surveys') }
             <n-tag :bordered="false" round>
               已选 {{ selectedCandidateIds.length }} / {{ voteLimit }}
             </n-tag>
-            <n-button type="primary" :disabled="selectedCandidateIds.length === 0 || isClosed || isDraft" @click="openVoteConfirm">
+            <n-button type="primary" :disabled="selectedCandidateIds.length === 0 || !canSubmitSurvey" @click="openVoteConfirm">
               <template #icon><Send :size="14" /></template>
               {{ currentVote ? '提交修改' : '提交投票' }}
             </n-button>

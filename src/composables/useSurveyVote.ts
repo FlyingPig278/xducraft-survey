@@ -3,6 +3,7 @@ import type { Candidate, CandidateStatus } from '../types'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { createId } from '../storage'
+import { getSurveyAvailability, isSurveyAcceptingSubmissions } from './useSurveyAvailability'
 
 const selectedCandidateIds = ref<string[]>([])
 const voteConfirmOpen = ref(false)
@@ -66,7 +67,7 @@ export function useSurveyVote() {
 
   const toggleCandidate = (candidateId: string) => {
     if (hasSubmittedCurrentSurvey.value && !survey.value.allowVoteEdits) return
-    if (survey.value.status !== 'open') { message.warning('当前问卷不在开放投票状态。'); return }
+    if (!isSurveyAcceptingSubmissions(survey.value)) { message.warning(getSurveyAvailability(survey.value).message); return }
     if (!approvedCandidateIds.value.has(candidateId)) return
     if (survey.value.voteMode === 'single') {
       selectedCandidateIds.value = isSelected(candidateId) ? [] : [candidateId]; return
@@ -80,7 +81,7 @@ export function useSurveyVote() {
 
   const openVoteConfirm = async () => {
     if (survey.value.requireLogin && !currentUser.value) { startOAuthLogin('player'); return }
-    if (survey.value.status !== 'open') { message.warning('当前问卷不在开放投票状态。'); return }
+    if (!isSurveyAcceptingSubmissions(survey.value)) { message.warning(getSurveyAvailability(survey.value).message); return }
     if (currentVote.value && !survey.value.allowVoteEdits) { message.warning('你已经提交过本问卷，当前不允许修改。'); return }
     if (selectedCandidateIds.value.length === 0) { message.warning('请至少选择一个候选项。'); return }
     if (!survey.value.requireLogin && !currentUser.value && !guestDraft.gameId.trim()) {
@@ -118,6 +119,7 @@ export function useSurveyVote() {
   const openCandidateModal = async () => {
     submissionMessage.value = ''
     if (survey.value.requireLogin && !currentUser.value) { startOAuthLogin('player'); return }
+    if (!isSurveyAcceptingSubmissions(survey.value)) { message.warning(getSurveyAvailability(survey.value).message); return }
     if (!survey.value.requireLogin && !currentUser.value && !guestDraft.gameId.trim()) {
       const confirmed = await requestGuestName()
       if (!confirmed || !guestDraft.gameId.trim()) return
@@ -132,7 +134,7 @@ export function useSurveyVote() {
 
   const submitCandidate = async () => {
     submissionMessage.value = ''
-    if (survey.value.status !== 'open' || !survey.value.candidateSubmission.enabled) { submissionMessage.value = '当前问卷没有开放候选项投稿。'; return }
+    if (!isSurveyAcceptingSubmissions(survey.value) || !survey.value.candidateSubmission.enabled) { submissionMessage.value = '当前问卷没有开放候选项投稿。'; return }
     for (const field of survey.value.candidateFields) {
       const val = submissionValues.value[field.key]?.trim() ?? ''
       if (field.required && !val) { submissionMessage.value = `请填写「${field.label}」。`; return }

@@ -121,13 +121,13 @@ const parseJsonPayload = (statusCode, statusMessage, text) => {
     }
   }
   if (typeof body === 'object' && body && Number(body.code) === 403) {
-    const error = new Error(`Blessing Skin 请求失败：${body.message || body.error || '权限不足'}`)
+    const error = new Error(`XDUCraft 皮肤站请求失败：${body.message || body.error || '权限不足'}`)
     error.status = 403
     throw error
   }
   if (statusCode < 200 || statusCode >= 300) {
     const detail = typeof body === 'object' && body && 'error' in body ? body.error : statusMessage
-    const error = new Error(`Blessing Skin 请求失败：${detail}`)
+    const error = new Error(`XDUCraft 皮肤站请求失败：${detail}`)
     error.status = statusCode
     throw error
   }
@@ -199,7 +199,7 @@ const decodeChunkedBody = (buffer) => {
 const parseRawHttpResponse = (buffer) => {
   const separator = buffer.indexOf('\r\n\r\n', 0, 'utf8')
   if (separator < 0) {
-    const error = new Error('Blessing Skin 响应格式异常')
+    const error = new Error('XDUCraft 皮肤站响应格式异常')
     error.status = 0
     throw error
   }
@@ -209,7 +209,7 @@ const parseRawHttpResponse = (buffer) => {
   const statusLine = headerLines[0] ?? ''
   const match = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)\s*(.*)$/)
   if (!match) {
-    const error = new Error('Blessing Skin 响应状态异常')
+    const error = new Error('XDUCraft 皮肤站响应状态异常')
     error.status = 0
     throw error
   }
@@ -505,6 +505,8 @@ const createSeedState = () => {
     description: '请选择你愿意参与的服务器方案。',
     guideText: '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选。',
     status: 'open',
+    startsAt: null,
+    endsAt: null,
     resultVisibility: 'always',
     allowVoteEdits: false,
     requireLogin: true,
@@ -649,7 +651,7 @@ const createSeedState = () => {
         id: 'log-seed',
         action: 'system.seed',
         actor: 'System',
-        detail: '创建演示问卷、候选项和投票记录',
+        detail: '创建初始问卷、候选项和投票记录',
         surveyId: survey.id,
         createdAt: ts
       }
@@ -661,6 +663,8 @@ const normalizeSurvey = (survey) => {
   const { publicResults, resultVisibility, ...rest } = survey
   return {
     ...rest,
+    startsAt: survey.startsAt ?? null,
+    endsAt: survey.endsAt ?? null,
     resultVisibility: resultVisibility ?? (publicResults ? 'always' : 'hidden'),
     maxVotes: Math.max(1, Number(survey.maxVotes) || 1),
     candidateSubmission: survey.candidateSubmission ?? { enabled: true, requiresReview: true },
@@ -791,7 +795,7 @@ const handleApi = async (req, res, pathname) => {
 
   if (pathname === '/api/auth/blessing/login' && req.method === 'GET') {
     if (!blessingAuthEnabled()) {
-      sendJson(res, 503, { error: 'Blessing Skin OAuth 未配置' })
+      sendJson(res, 503, { error: 'XDUCraft 皮肤站登录未配置' })
       return
     }
     cleanupAuthMaps()
@@ -835,7 +839,7 @@ const handleApi = async (req, res, pathname) => {
     try {
       const token = await exchangeBlessingCode(code)
       const accessToken = token.access_token
-      if (!accessToken) throw new Error('Blessing Skin 未返回 access_token')
+      if (!accessToken) throw new Error('XDUCraft 皮肤站未返回 access_token')
       const profile = await fetchBlessingUser(accessToken)
       if (blessingFetchPlayers && !Array.isArray(profile.players)) {
         try {
@@ -852,7 +856,7 @@ const handleApi = async (req, res, pathname) => {
       redirectToFrontend(res, stateEntry.returnTo, { auth_ticket: ticket })
     } catch (error) {
       redirectToFrontend(res, stateEntry.returnTo, {
-        auth_error: error instanceof Error ? error.message : 'Blessing Skin 登录失败'
+        auth_error: error instanceof Error ? error.message : 'XDUCraft 皮肤站登录失败'
       })
     }
     return
@@ -879,11 +883,6 @@ const handleApi = async (req, res, pathname) => {
 
   if (pathname === '/api/state' && req.method === 'PUT') {
     sendJson(res, 200, await saveState(await readJsonBody(req)))
-    return
-  }
-
-  if (pathname === '/api/reset' && req.method === 'POST') {
-    sendJson(res, 200, await saveState(createSeedState()))
     return
   }
 

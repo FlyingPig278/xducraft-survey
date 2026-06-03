@@ -33,10 +33,6 @@ export const surveyApi = {
       method: 'PUT',
       body: JSON.stringify(state)
     }),
-  resetState: () =>
-    request<AppState>('/api/reset', {
-      method: 'POST'
-    }),
   blessingAuthStatus: () => request<BlessingAuthStatus>('/api/auth/blessing/status'),
   blessingLoginUrl: (returnTo: string, role: UserRole = 'player') => {
     const params = new URLSearchParams({ returnTo, role })

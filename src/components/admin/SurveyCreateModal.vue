@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NSwitch, NButton } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NSwitch, NButton, NDatePicker } from 'naive-ui'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
 
 const { surveyDraft, surveyCreateModalOpen, createSurvey } = useAdminSurvey()
@@ -30,6 +30,14 @@ const resultVisibilityOptions = [
       <n-form-item label="答题指引">
         <n-input v-model:value="surveyDraft.guideText" type="textarea" :rows="2" />
       </n-form-item>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+        <n-form-item label="开始时间">
+          <n-date-picker v-model:value="surveyDraft.startsAt" type="datetime" clearable style="width: 100%" />
+        </n-form-item>
+        <n-form-item label="结束时间">
+          <n-date-picker v-model:value="surveyDraft.endsAt" type="datetime" clearable style="width: 100%" />
+        </n-form-item>
+      </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
         <n-form-item label="模式">
           <n-select v-model:value="surveyDraft.voteMode" :options="voteModeOptions" />

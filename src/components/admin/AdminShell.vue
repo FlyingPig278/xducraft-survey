@@ -98,14 +98,14 @@ const openPublicSurvey = () => {
       <div v-if="!isAdmin" class="admin-login-panel">
         <n-card title="管理员登录" size="large">
           <n-alert v-if="currentUser" type="warning" :bordered="false" style="margin-bottom: 16px">
-            当前账号「{{ currentUser.displayName }}」已登录，但没有管理员权限。请确认 .env 中的 BLESSING_ADMIN_IDS 是否包含该账号的 uid、邮箱、昵称或游戏名。
+            当前账号「{{ currentUser.displayName }}」已登录，但没有管理员权限。请确认管理员白名单是否包含该账号的 uid、邮箱、昵称或游戏名。
           </n-alert>
           <p class="admin-login-copy">
-            后台仅允许 Blessing Skin OAuth2 管理员白名单账号进入。
+            后台仅允许 XDUCraft 皮肤站管理员白名单账号进入。
           </p>
           <n-button type="primary" block @click="startOAuthLogin('admin')">
             <template #icon><LogIn :size="15" /></template>
-            使用 Blessing Skin 登录
+            使用 XDUCraft 皮肤站登录
           </n-button>
           <n-button v-if="currentUser" block quaternary style="margin-top: 10px" @click="logout">
             <template #icon><LogOut :size="15" /></template>

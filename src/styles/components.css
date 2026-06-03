@@ -154,6 +154,17 @@
   background: #f0f0ff;
 }
 
+.candidate-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.candidate-card.disabled:hover {
+  border-color: #e2e8f0;
+  background: #fff;
+  box-shadow: none;
+}
+
 .candidate-card.custom-card .candidate-card-check {
   border-color: #c7d2fe;
 }

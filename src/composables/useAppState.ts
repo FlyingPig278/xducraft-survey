@@ -129,20 +129,9 @@ export function useAppState() {
     }
   }
 
-  const addAudit = (action: string, detail: string, surveyId = activeSurveyId.value, actor = 'System') => {
-    appState.value.auditLogs.unshift({ id: createId('log'), action, actor, detail, surveyId, createdAt: new Date().toISOString() })
-  }
-
-  const resetDemo = async () => {
-    try {
-      stateRevision.value += 1
-      applyRemoteState(await surveyApi.resetState(), '')
-      message.success('演示数据已重置')
-      return true
-    } catch {
-      message.error('重置失败，请确认 API 服务已启动。')
-      return false
-    }
+  const addAudit = (action: string, detail: string, surveyId: string | null = activeSurveyId.value, actor = 'System') => {
+    const log = { id: createId('log'), action, actor, detail, createdAt: new Date().toISOString(), surveyId: surveyId || undefined }
+    appState.value.auditLogs.unshift(log)
   }
 
   return {
@@ -161,7 +150,6 @@ export function useAppState() {
     stopRemoteSync,
     persist,
     addAudit,
-    resetDemo,
     message
   }
 }

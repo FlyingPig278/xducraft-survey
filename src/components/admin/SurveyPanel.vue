@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NCard, NSelect, NSpace, NTag } from 'naive-ui'
-import { Eye, Plus, RotateCcw, Settings2 } from '../../icons'
+import { NButton, NCard, NPopconfirm, NSelect, NSpace, NTag } from 'naive-ui'
+import { Eye, Plus, Settings2, Trash2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
 import { navigateAdmin, publicSurveyUrlFor } from '../../composables/useRouter'
 import { statusLabel, statusTagType } from '../../composables/useCandidateFields'
+import { formatSurveyWindow } from '../../composables/useSurveyAvailability'
 import type { SurveyStatus } from '../../types'
 
 type SurveyFilter = 'all' | SurveyStatus
 
-const { appState, adminSurveyId, surveys, resetDemo } = useAppState()
-const { surveyCreateModalOpen, updateSurveyStatus } = useAdminSurvey()
+const { appState, adminSurveyId, surveys } = useAppState()
+const { surveyCreateModalOpen, updateSurveyStatus, deleteSurvey } = useAdminSurvey()
 const statusFilter = ref<SurveyFilter>('all')
 
 const filterOptions = [
@@ -65,10 +66,6 @@ const changeSurveyStatus = (surveyId: string, value: SurveyStatus) => {
         <template #icon><Plus :size="14" /></template>
         新建问卷
       </n-button>
-      <n-button quaternary @click="resetDemo">
-        <template #icon><RotateCcw :size="14" /></template>
-        重置演示
-      </n-button>
     </div>
   </div>
 
@@ -89,6 +86,7 @@ const changeSurveyStatus = (surveyId: string, value: SurveyStatus) => {
             <span>{{ row.selections }} 次选择</span>
             <span>{{ row.candidates }} 个候选</span>
             <span>{{ row.item.voteMode === 'single' ? '单选' : `最多 ${row.item.maxVotes} 项` }}</span>
+            <span v-if="formatSurveyWindow(row.item)">{{ formatSurveyWindow(row.item) }}</span>
           </span>
         </span>
         <span class="survey-list-actions">
@@ -108,6 +106,19 @@ const changeSurveyStatus = (surveyId: string, value: SurveyStatus) => {
             <template #icon><Eye :size="13" /></template>
             预览
           </n-button>
+          <n-popconfirm
+            positive-text="删除"
+            negative-text="取消"
+            @positive-click="deleteSurvey(row.item.id)"
+          >
+            <template #trigger>
+              <n-button size="tiny" type="error" secondary @click.stop>
+                <template #icon><Trash2 :size="13" /></template>
+                删除
+              </n-button>
+            </template>
+            删除后会移除该问卷的候选项、投票记录和关联日志。
+          </n-popconfirm>
         </span>
       </div>
     </div>

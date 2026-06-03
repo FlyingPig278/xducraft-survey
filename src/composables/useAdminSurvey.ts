@@ -24,6 +24,8 @@ const surveyDraft = reactive({
   title: '',
   description: '',
   guideText: DEFAULT_GUIDE_TEXT,
+  startsAt: null as number | null,
+  endsAt: null as number | null,
   voteMode: 'multiple' as VoteMode,
   maxVotes: 3,
   resultVisibility: 'always' as ResultVisibility,
@@ -39,6 +41,8 @@ const surveySettingsDraft = reactive({
   description: '',
   guideText: '',
   status: 'draft' as SurveyStatus,
+  startsAt: null as number | null,
+  endsAt: null as number | null,
   voteMode: 'multiple' as VoteMode,
   maxVotes: 3,
   resultVisibility: 'always' as ResultVisibility,
@@ -50,12 +54,22 @@ const surveySettingsDraft = reactive({
 
 const duplicateField = (f: FieldDefinition): FieldDefinition => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined })
 const createDefaultCandidateFields = (): FieldDefinition[] => defaultCandidateFieldTemplates.map((f) => ({ ...f, id: createId('field'), options: f.options ? [...f.options] : undefined }))
+const toDateTimeValue = (value?: string | null) => {
+  if (!value) return null
+  const ts = Date.parse(value)
+  return Number.isFinite(ts) ? ts : null
+}
+const toIsoDateTime = (value: number | null) => value ? new Date(value).toISOString() : null
+const validateTimeWindow = (startsAt: number | null, endsAt: number | null) =>
+  !startsAt || !endsAt || endsAt > startsAt
 
 const settingsSnapshot = (item: SurveyDefinition) => JSON.stringify({
   title: item.title,
   description: item.description,
   guideText: item.guideText,
   status: item.status,
+  startsAt: toDateTimeValue(item.startsAt),
+  endsAt: toDateTimeValue(item.endsAt),
   voteMode: item.voteMode,
   maxVotes: item.maxVotes,
   resultVisibility: item.resultVisibility,
@@ -83,6 +97,8 @@ export function useAdminSurvey() {
       description: survey.value.description,
       guideText: survey.value.guideText,
       status: survey.value.status,
+      startsAt: toDateTimeValue(survey.value.startsAt),
+      endsAt: toDateTimeValue(survey.value.endsAt),
       voteMode: survey.value.voteMode,
       maxVotes: survey.value.maxVotes,
       resultVisibility: survey.value.resultVisibility,
@@ -99,11 +115,17 @@ export function useAdminSurvey() {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
     const title = surveySettingsDraft.title.trim()
     if (!title) { message.warning('请填写问卷标题。'); return false }
+    if (!validateTimeWindow(surveySettingsDraft.startsAt, surveySettingsDraft.endsAt)) {
+      message.warning('结束时间需要晚于开始时间。')
+      return false
+    }
     const surveyId = survey.value.id
     survey.value.title = title
     survey.value.description = surveySettingsDraft.description.trim() || '请选择你愿意参与的服务器方案。'
     survey.value.guideText = surveySettingsDraft.guideText.trim() || DEFAULT_GUIDE_TEXT
     survey.value.status = surveySettingsDraft.status
+    survey.value.startsAt = toIsoDateTime(surveySettingsDraft.startsAt)
+    survey.value.endsAt = toIsoDateTime(surveySettingsDraft.endsAt)
     survey.value.voteMode = surveySettingsDraft.voteMode
     survey.value.maxVotes = Math.max(1, Number(surveySettingsDraft.maxVotes) || 1)
     survey.value.resultVisibility = surveySettingsDraft.resultVisibility
@@ -144,11 +166,17 @@ export function useAdminSurvey() {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
     const title = surveyDraft.title.trim()
     if (!title) { message.warning('请填写新问卷标题。'); return }
+    if (!validateTimeWindow(surveyDraft.startsAt, surveyDraft.endsAt)) {
+      message.warning('结束时间需要晚于开始时间。')
+      return
+    }
     const ts = new Date().toISOString()
     const fields = surveyDraft.cloneCurrentFields ? survey.value.candidateFields.map(duplicateField) : createDefaultCandidateFields()
     const next: SurveyDefinition = {
       id: createId('survey'), title, description: surveyDraft.description.trim() || '请选择你愿意参与的服务器方案。',
-      guideText: surveyDraft.guideText.trim() || DEFAULT_GUIDE_TEXT, status: 'draft', resultVisibility: surveyDraft.resultVisibility,
+      guideText: surveyDraft.guideText.trim() || DEFAULT_GUIDE_TEXT, status: 'draft',
+      startsAt: toIsoDateTime(surveyDraft.startsAt), endsAt: toIsoDateTime(surveyDraft.endsAt),
+      resultVisibility: surveyDraft.resultVisibility,
       allowVoteEdits: surveyDraft.allowVoteEdits, requireLogin: surveyDraft.requireLogin, voteMode: surveyDraft.voteMode,
       maxVotes: Math.max(1, Number(surveyDraft.maxVotes) || 1),
       candidateSubmission: { enabled: surveyDraft.candidateSubmissionEnabled, requiresReview: surveyDraft.candidateSubmissionRequiresReview },
@@ -156,11 +184,32 @@ export function useAdminSurvey() {
     }
     appState.value.surveys.unshift(next)
     surveyDraft.title = ''; surveyDraft.description = ''; surveyDraft.guideText = DEFAULT_GUIDE_TEXT
+    surveyDraft.startsAt = null; surveyDraft.endsAt = null
     addAudit('survey.created', `${currentUser.value.displayName} 创建了问卷「${next.title}」`, next.id, currentUser.value.displayName)
     if (!(await persist(next.id))) return
     surveyCreateModalOpen.value = false
     message.success(`问卷「${next.title}」已创建，开始配置投稿字段。`)
     navigateAdmin('fields', next.id)
+  }
+
+  const deleteSurvey = async (surveyId: string) => {
+    if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
+    const target = appState.value.surveys.find((item) => item.id === surveyId)
+    if (!target) { message.error('问卷不存在。'); return false }
+    if (appState.value.surveys.length <= 1) {
+      message.warning('至少需要保留一个问卷。')
+      return false
+    }
+    const nextSurveyId = appState.value.surveys.find((item) => item.id !== surveyId)?.id ?? ''
+    appState.value.surveys = appState.value.surveys.filter((item) => item.id !== surveyId)
+    appState.value.candidates = appState.value.candidates.filter((item) => item.surveyId !== surveyId)
+    appState.value.votes = appState.value.votes.filter((item) => item.surveyId !== surveyId)
+    appState.value.auditLogs = appState.value.auditLogs.filter((item) => item.surveyId !== surveyId)
+    addAudit('survey.deleted', `${currentUser.value.displayName} 删除了问卷「${target.title}」及其关联数据`, null, currentUser.value.displayName)
+    if (!(await persist(nextSurveyId))) return false
+    message.success('问卷已删除')
+    navigateAdmin('surveys', nextSurveyId)
+    return true
   }
 
   return {
@@ -175,6 +224,7 @@ export function useAdminSurvey() {
     saveSurveySettings,
     publishSurvey,
     updateSurveyStatus,
+    deleteSurvey,
     createSurvey
   }
 }

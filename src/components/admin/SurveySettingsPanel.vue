@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NInputNumber, NRadioButton, NRadioGroup, NSelect, NSpace, NSwitch, NTag } from 'naive-ui'
+import { NAlert, NButton, NCard, NDatePicker, NForm, NFormItem, NInput, NInputNumber, NRadioButton, NRadioGroup, NSelect, NSpace, NSwitch, NTag } from 'naive-ui'
 import { Copy, Download, Eye, Save, Settings2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
@@ -186,6 +186,24 @@ const downloadPoster = async () => {
       <n-form-item label="状态">
         <n-select v-model:value="surveySettingsDraft.status" :options="statusOptions" />
       </n-form-item>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+        <n-form-item label="开始时间">
+          <n-date-picker
+            v-model:value="surveySettingsDraft.startsAt"
+            type="datetime"
+            clearable
+            style="width: 100%"
+          />
+        </n-form-item>
+        <n-form-item label="结束时间">
+          <n-date-picker
+            v-model:value="surveySettingsDraft.endsAt"
+            type="datetime"
+            clearable
+            style="width: 100%"
+          />
+        </n-form-item>
+      </div>
       <n-form-item label="说明">
         <n-input v-model:value="surveySettingsDraft.description" type="textarea" :rows="2" />
       </n-form-item>

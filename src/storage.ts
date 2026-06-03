@@ -32,6 +32,8 @@ const seedSurvey: SurveyDefinition = {
   guideText:
     '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选。',
   status: 'open',
+  startsAt: null,
+  endsAt: null,
   resultVisibility: 'always',
   allowVoteEdits: false,
   requireLogin: true,
@@ -190,7 +192,7 @@ const seedLogs: AuditLog[] = [
     id: 'log-seed',
     action: 'system.seed',
     actor: 'System',
-    detail: '创建演示问卷、候选项和投票记录',
+    detail: '创建初始问卷、候选项和投票记录',
     surveyId: seedSurvey.id,
     createdAt: now()
   }

@@ -61,13 +61,13 @@ export function useAuth() {
     try {
       const status = await surveyApi.blessingAuthStatus()
       if (!status.enabled) {
-        message.error('Blessing Skin OAuth 未配置，无法登录。')
+        message.error('XDUCraft 皮肤站登录未配置，无法登录。')
         return
       }
       const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
       window.location.href = surveyApi.blessingLoginUrl(returnTo, role)
     } catch {
-      message.error('无法读取 OAuth 配置，请确认 API 服务已启动。')
+      message.error('无法读取皮肤站登录配置，请确认 API 服务已启动。')
     }
   }
 

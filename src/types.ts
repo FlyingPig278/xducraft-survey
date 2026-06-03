@@ -26,6 +26,8 @@ export interface SurveyDefinition {
   description: string
   guideText: string
   status: SurveyStatus
+  startsAt?: string | null
+  endsAt?: string | null
   resultVisibility: ResultVisibility
   allowVoteEdits: boolean
   requireLogin: boolean
