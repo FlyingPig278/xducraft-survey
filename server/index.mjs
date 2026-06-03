@@ -64,6 +64,7 @@ const blessingUserAgent = process.env.BLESSING_USER_AGENT || 'XDUCraft-Survey/0.
 const blessingIpFamily = Number(process.env.BLESSING_IP_FAMILY || 4)
 const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS === 'true'
 const blessingProxyUrl = process.env.BLESSING_PROXY_URL || ''
+const blessingDebugProfile = process.env.BLESSING_DEBUG_PROFILE === 'true'
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
@@ -417,14 +418,43 @@ const firstText = (...values) => {
 const normalizeUserKey = (value) =>
   String(value || '').trim().toLowerCase()
 
-const mapBlessingUser = (profile, requestedRole = 'player') => {
-  profile = typeof profile === 'object' && profile ? profile : {}
+const asObject = (value) =>
+  typeof value === 'object' && value !== null ? value : {}
+
+const unwrapBlessingProfile = (rawProfile) => {
+  const root = asObject(rawProfile)
+  const data = asObject(root.data)
+  const user = asObject(root.user)
+  const account = asObject(root.account)
+  if (Object.keys(data).length > 0) return { ...data, players: data.players ?? root.players }
+  if (Object.keys(user).length > 0) return { ...user, players: user.players ?? root.players }
+  if (Object.keys(account).length > 0) return { ...account, players: account.players ?? root.players }
+  return root
+}
+
+const logBlessingProfileShape = (rawProfile, profile, adminKeys) => {
+  if (!blessingDebugProfile) return
+  const root = asObject(rawProfile)
+  console.log('[blessing] profile root keys:', Object.keys(root).join(', ') || '(none)')
+  console.log('[blessing] profile user keys:', Object.keys(profile).join(', ') || '(none)')
+  console.log('[blessing] admin match keys:', adminKeys.filter(Boolean).join(', ') || '(none)')
+}
+
+const mapBlessingUser = (rawProfile) => {
+  const profile = unwrapBlessingProfile(rawProfile)
   const blessingUserId = firstText(profile.uid, profile.id, profile.user_id, profile.email, profile.nickname, profile.username, createId('blessing-user'))
   const email = firstText(profile.email)
   const displayName = firstText(profile.nickname, profile.username, profile.name, email.split('@')[0], `用户 ${blessingUserId}`)
-  const playerNames = Array.isArray(profile.players)
-    ? profile.players.map((player) => firstText(player?.name, player?.player_name, player?.username)).filter(Boolean)
-    : []
+  const players = Array.isArray(profile.players) ? profile.players : []
+  const playerNames = players
+    .map((player) => firstText(player?.name, player?.player_name, player?.username))
+    .filter(Boolean)
+  const playerIds = players
+    .map((player) => firstText(player?.pid, player?.id, player?.uuid))
+    .filter(Boolean)
+  const permissions = Array.isArray(profile.permissions) ? profile.permissions : []
+  const roles = Array.isArray(profile.roles) ? profile.roles : []
+  const groups = Array.isArray(profile.groups) ? profile.groups : []
   const gameId = firstText(profile.player_name, profile.gameId, profile.game_id, ...playerNames, profile.username, profile.nickname, displayName)
   const adminKeys = [
     blessingUserId,
@@ -434,10 +464,18 @@ const mapBlessingUser = (profile, requestedRole = 'player') => {
     profile.email,
     profile.nickname,
     profile.username,
+    profile.name,
+    profile.permission,
+    ...permissions,
+    ...roles,
+    ...groups,
+    ...playerIds,
+    ...playerNames,
     displayName,
     gameId
   ].map(normalizeUserKey)
-  const canUseAdmin = requestedRole === 'admin' && adminKeys.some((key) => blessingAdminIds.has(key))
+  logBlessingProfileShape(rawProfile, profile, adminKeys)
+  const canUseAdmin = adminKeys.some((key) => blessingAdminIds.has(key))
   const normalizedId = blessingUserId.toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9_:-]/g, '-') || createId('user')
   return {
     id: `blessing-${normalizedId}`,
@@ -745,7 +783,8 @@ const handleApi = async (req, res, pathname) => {
   if (pathname === '/api/auth/blessing/status' && req.method === 'GET') {
     sendJson(res, 200, {
       enabled: blessingAuthEnabled(),
-      callbackUrl: blessingRedirectUri
+      callbackUrl: blessingRedirectUri,
+      adminConfigured: blessingAdminIds.size > 0
     })
     return
   }
@@ -807,7 +846,7 @@ const handleApi = async (req, res, pathname) => {
           console.warn(`[blessing] /api/players skipped: ${describeFetchError(error)}`)
         }
       }
-      const user = mapBlessingUser(profile, stateEntry.role)
+      const user = mapBlessingUser(profile)
       const ticket = createToken('auth-ticket')
       authTickets.set(ticket, { user, expiresAt: Date.now() + authTicketTtlMs })
       redirectToFrontend(res, stateEntry.returnTo, { auth_ticket: ticket })
