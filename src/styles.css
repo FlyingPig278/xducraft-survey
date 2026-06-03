@@ -52,6 +52,61 @@ textarea {
   margin: 0 auto;
 }
 
+.survey-rule-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 16px;
+}
+
+.survey-rule-hints span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.guest-identity-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.guest-identity-panel strong {
+  display: block;
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.guest-identity-panel span,
+.modal-guest-identity span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.modal-guest-identity {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
 .candidate-card {
   display: flex;
   align-items: center;
@@ -560,5 +615,9 @@ textarea {
 
   .candidate-card {
     align-items: flex-start;
+  }
+
+  .guest-identity-panel {
+    grid-template-columns: 1fr;
   }
 }

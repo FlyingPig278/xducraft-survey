@@ -95,7 +95,7 @@ const newField = reactive({
 const surveyDraft = reactive({
   title: '',
   description: '',
-  guideText: '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。',
+  guideText: '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选。',
   voteMode: 'multiple' as VoteMode,
   maxVotes: 3,
   resultVisibility: 'always' as ResultVisibility,
@@ -141,7 +141,8 @@ const adminPanels: Array<{ key: AdminPanelKey; label: string }> = [
 ]
 
 const DEVICE_KEY = 'xducraft-survey-device-id-v1'
-const defaultGuideText = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。'
+const legacyGuideText = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。'
+const defaultGuideText = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选。'
 
 const parseHash = (value: string): RouteState => {
   const clean = value.replace(/^#\/?/, '')
@@ -220,7 +221,32 @@ const editingCandidateSurvey = computed(() => editingCandidate.value ? surveyByI
 const editingCandidateFields = computed(() => editingCandidateSurvey.value?.candidateFields ?? [])
 const publicSurveyUrl = computed(() => `${window.location.origin}${window.location.pathname}#/s/${survey.value.id}`)
 const publicSurveyQrUrl = computed(() => `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicSurveyUrl.value)}`)
-const surveyGuideText = computed(() => survey.value.guideText || defaultGuideText)
+const surveyGuideText = computed(() => {
+  const text = survey.value.guideText?.trim()
+  return !text || text === legacyGuideText ? defaultGuideText : text
+})
+const needsGuestName = computed(() => !survey.value.requireLogin && !currentUser.value)
+const guestIdentityHint = '本问卷无需登录，游戏昵称用于留档和重复提交判断。'
+const customCandidateHint = computed(() => survey.value.candidateSubmission.requiresReview ? '提交后进入审核，通过后可被投票' : '提交后直接加入投票列表')
+const candidateSubmitButtonText = computed(() => survey.value.candidateSubmission.requiresReview ? '提交审核' : '提交候选项')
+const candidateModalTagText = computed(() => survey.value.candidateSubmission.requiresReview ? '管理员审核后显示' : '提交后立即显示')
+const resultVisibilityHint = computed(() => {
+  if (survey.value.resultVisibility === 'always') return '提交前可查看票数'
+  if (survey.value.resultVisibility === 'after_vote') return '投票后可查看票数'
+  return '票数不向玩家公开'
+})
+const voteEditHint = computed(() => survey.value.allowVoteEdits ? '提交后可修改' : '提交后不可修改')
+const identityHint = computed(() => survey.value.requireLogin ? '需要登录提交' : '免登录填写')
+const surveyRuleHints = computed(() => {
+  const hints = [resultVisibilityHint.value, voteEditHint.value, identityHint.value]
+  if (survey.value.candidateSubmission.enabled) hints.push(customCandidateHint.value)
+  return hints
+})
+const voteConfirmTitle = computed(() => currentVote.value ? '确认修改投票？' : '确认提交投票？')
+const voteConfirmDescription = computed(() => {
+  if (currentVote.value) return '本次提交会覆盖你当前的投票选择，并保留修改记录。'
+  return survey.value.allowVoteEdits ? '本问卷允许在开放期间修改投票。' : '提交后本问卷不允许修改，请确认你的选择无误。'
+})
 const surveyHasVotes = computed(() => surveyVotes.value.length > 0)
 const surveyHasCandidates = computed(() => surveyCandidates.value.length > 0)
 
@@ -473,13 +499,16 @@ const logout = () => { currentUser.value = null; saveUser(null); message.info('�
 
 const anonymousGameId = () => guestDraft.gameId.trim()
 
-const hasVoteIdentity = () => {
+const hasVoteIdentity = (usage: 'vote' | 'candidate' = 'vote') => {
   if (survey.value.requireLogin) {
     if (!currentUser.value) { startOAuthLogin('player'); message.info('已进入 mock OAuth 登录，请再次确认操作。'); return false }
     return true
   }
   if (currentUser.value) return true
-  if (!anonymousGameId()) { message.warning('请填写游戏昵称用于留档。'); return false }
+  if (!anonymousGameId()) {
+    message.warning(usage === 'candidate' ? '请先填写游戏昵称，再提交候选项。' : '请先填写游戏昵称，再提交投票。')
+    return false
+  }
   return true
 }
 
@@ -500,7 +529,7 @@ const toggleCandidate = (candidateId: string) => {
 
 const openVoteConfirm = () => {
   statusMessage.value = ''
-  if (!hasVoteIdentity()) return
+  if (!hasVoteIdentity('vote')) return
   if (survey.value.status !== 'open') { message.warning('当前问卷不在开放投票状态。'); return }
   if (currentVote.value && !survey.value.allowVoteEdits) { message.warning('你已经提交过本问卷，当前不允许修改。'); return }
   if (selectedCandidateIds.value.length === 0) { message.warning('请至少选择一个候选项。'); return }
@@ -514,7 +543,7 @@ const openCandidateModal = () => {
 }
 
 const confirmSubmitVote = async () => {
-  if (!hasVoteIdentity()) return
+  if (!hasVoteIdentity('vote')) return
   const valid = selectedCandidateIds.value.filter((id) => approvedCandidateIds.value.has(id))
   selectedCandidateIds.value = [...new Set(valid)]
   if (selectedCandidateIds.value.length === 0 || selectedCandidateIds.value.length > voteLimit.value) return
@@ -538,7 +567,7 @@ const confirmSubmitVote = async () => {
 
 const submitCandidate = async () => {
   submissionMessage.value = ''
-  if (!hasVoteIdentity()) { submissionMessage.value = survey.value.requireLogin ? '请先登录' : '请填写游戏昵称'; return }
+  if (!hasVoteIdentity('candidate')) { submissionMessage.value = survey.value.requireLogin ? '请先登录' : '请先填写游戏昵称，用于候选项留档。'; return }
   if (survey.value.status !== 'open' || !survey.value.candidateSubmission.enabled) { submissionMessage.value = '当前问卷没有开放候选项投稿。'; return }
   const surveyId = survey.value.id
   for (const field of survey.value.candidateFields) {
@@ -867,13 +896,18 @@ const downloadFile = (name: string, content: string, type: string) => {
             <n-tag v-else size="small" :bordered="false">最多 {{ voteLimit }} 项</n-tag>
           </template>
 
-          <p style="color: #64748b; margin: 0 0 20px; line-height: 1.6">{{ surveyGuideText }}</p>
+          <p style="color: #64748b; margin: 0 0 10px; line-height: 1.6">{{ surveyGuideText }}</p>
+          <div class="survey-rule-hints">
+            <span v-for="hint in surveyRuleHints" :key="hint">{{ hint }}</span>
+          </div>
 
           <!-- Guest name input -->
-          <div v-if="!survey.requireLogin && !currentUser" style="margin-bottom: 16px">
-            <n-form-item label="游戏昵称" :show-feedback="false">
-              <n-input v-model:value="guestDraft.gameId" placeholder="用于留档和本地去重" />
-            </n-form-item>
+          <div v-if="needsGuestName" class="guest-identity-panel">
+            <div>
+              <strong>游戏昵称</strong>
+              <span>{{ guestIdentityHint }}</span>
+            </div>
+            <n-input v-model:value="guestDraft.gameId" placeholder="例如 Steve" />
           </div>
 
           <!-- Submitted view -->
@@ -973,7 +1007,7 @@ const downloadFile = (name: string, content: string, type: string) => {
                 <div class="candidate-card-check candidate-card-plus"></div>
                 <div class="candidate-card-body">
                   <div class="candidate-card-title">自定义候选项</div>
-                  <div class="candidate-card-meta">新增候选项会进入审核，通过后可被投票</div>
+                  <div class="candidate-card-meta">{{ customCandidateHint }}</div>
                 </div>
               </div>
             </n-space>
@@ -991,8 +1025,8 @@ const downloadFile = (name: string, content: string, type: string) => {
       </div>
 
       <!-- Vote confirmation modal -->
-      <n-modal v-model:show="voteConfirmOpen" preset="dialog" title="确认提交投票？" positive-text="确认提交" negative-text="返回检查" @positive-click="confirmSubmitVote" @negative-click="voteConfirmOpen = false">
-        <p style="color: #64748b">提交后默认不能修改，请确认你的选择无误。</p>
+      <n-modal v-model:show="voteConfirmOpen" preset="dialog" :title="voteConfirmTitle" :positive-text="currentVote ? '确认修改' : '确认提交'" negative-text="返回检查" @positive-click="confirmSubmitVote" @negative-click="voteConfirmOpen = false">
+        <p style="color: #64748b">{{ voteConfirmDescription }}</p>
         <n-space vertical :size="6">
           <n-tag v-for="c in selectedCandidates" :key="c.id" :bordered="false" type="info" round>{{ c.title }}</n-tag>
         </n-space>
@@ -1001,9 +1035,15 @@ const downloadFile = (name: string, content: string, type: string) => {
       <!-- Candidate submission modal -->
       <n-modal v-model:show="candidateModalOpen" preset="card" title="提交自定义候选项" style="width: 680px; max-width: 95vw" :bordered="true">
         <template #header-extra>
-          <n-tag :bordered="false" size="small">审核通过后出现在投票列表</n-tag>
+          <n-tag :bordered="false" size="small">{{ candidateModalTagText }}</n-tag>
         </template>
         <n-form label-placement="top" :show-feedback="false">
+          <div v-if="needsGuestName" class="modal-guest-identity">
+            <n-form-item label="游戏昵称" :show-feedback="false">
+              <n-input v-model:value="guestDraft.gameId" placeholder="例如 Steve" />
+            </n-form-item>
+            <span>{{ guestIdentityHint }}</span>
+          </div>
           <div class="modal-form-grid">
             <n-form-item
               v-for="field in survey.candidateFields"
@@ -1034,7 +1074,7 @@ const downloadFile = (name: string, content: string, type: string) => {
           <n-alert v-if="submissionMessage" type="warning" style="margin-top: 16px" :bordered="false">{{ submissionMessage }}</n-alert>
           <n-space justify="end" style="margin-top: 20px" :size="12">
             <n-button @click="resetSubmissionValues">重置</n-button>
-            <n-button type="primary" @click="submitCandidate">提交审核</n-button>
+            <n-button type="primary" @click="submitCandidate">{{ candidateSubmitButtonText }}</n-button>
           </n-space>
         </n-form>
       </n-modal>
@@ -1217,7 +1257,10 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <n-tag :type="statusTagType(survey.status)" size="small" round>{{ statusLabel(survey.status) }}</n-tag>
                     </n-space>
                   </template>
-                  <p style="color: #64748b; margin: 0 0 16px; line-height: 1.6">{{ surveyGuideText }}</p>
+                  <p style="color: #64748b; margin: 0 0 10px; line-height: 1.6">{{ surveyGuideText }}</p>
+                  <div class="survey-rule-hints">
+                    <span v-for="hint in surveyRuleHints" :key="hint">{{ hint }}</span>
+                  </div>
                   <n-space vertical :size="8">
                     <n-empty v-if="approvedCandidates.length === 0" description="当前还没有已通过候选项" />
                     <div v-for="c in approvedCandidates" :key="c.id" class="candidate-card" style="cursor: default">
@@ -1256,7 +1299,7 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <div class="candidate-card-check candidate-card-plus"></div>
                       <div class="candidate-card-body">
                         <div class="candidate-card-title">自定义候选项</div>
-                        <div class="candidate-card-meta">新增候选项会进入审核，通过后可被投票</div>
+                        <div class="candidate-card-meta">{{ customCandidateHint }}</div>
                       </div>
                     </div>
                   </n-space>
