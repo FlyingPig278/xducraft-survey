@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NAlert, NButton, NCard } from 'naive-ui'
 import {
-  ClipboardList, Settings2, CheckSquare, Archive,
+  ClipboardList, Settings2, CheckSquare, Archive, GripVertical,
   LogIn, LogOut
 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
@@ -11,6 +11,7 @@ import { useAdminCandidates } from '../../composables/useAdminCandidates'
 import { publicSurveyUrlFor } from '../../composables/useRouter'
 import SurveyPanel from './SurveyPanel.vue'
 import SurveyCreateModal from './SurveyCreateModal.vue'
+import SurveySettingsPanel from './SurveySettingsPanel.vue'
 import PreviewPanel from './PreviewPanel.vue'
 import FieldsPanel from './FieldsPanel.vue'
 import CandidatesPanel from './CandidatesPanel.vue'
@@ -22,8 +23,9 @@ const { adminPanel, navigateAdmin } = useRouter()
 const { pendingCandidateCount } = useAdminCandidates()
 
 const adminPanels: Array<{ key: AdminPanelKey; label: string; icon: any }> = [
-  { key: 'surveys', label: '问卷管理', icon: ClipboardList },
-  { key: 'fields', label: '字段配置', icon: Settings2 },
+  { key: 'surveys', label: '问卷列表', icon: ClipboardList },
+  { key: 'settings', label: '问卷设置', icon: Settings2 },
+  { key: 'fields', label: '字段配置', icon: GripVertical },
   { key: 'candidates', label: '候选审核', icon: CheckSquare },
   { key: 'archive', label: '数据留档', icon: Archive }
 ]
@@ -115,6 +117,7 @@ const openPublicSurvey = () => {
 
       <div v-else class="admin-content">
         <SurveyPanel v-if="adminPanel === 'surveys'" />
+        <SurveySettingsPanel v-else-if="adminPanel === 'settings'" />
         <PreviewPanel v-else-if="adminPanel === 'preview'" />
         <FieldsPanel v-else-if="adminPanel === 'fields'" />
         <CandidatesPanel v-else-if="adminPanel === 'candidates'" />

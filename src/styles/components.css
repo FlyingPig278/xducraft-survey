@@ -246,6 +246,130 @@
   background: #fff;
 }
 
+.poster-share-section {
+  gap: 16px;
+}
+
+.poster-share-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.poster-share-toolbar > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.poster-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.poster-preview-wrap {
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border-radius: 10px;
+  background: #eef6f7;
+  overflow-x: auto;
+}
+
+.poster-card {
+  width: min(100%, 680px);
+  border-radius: 14px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.24);
+}
+
+.poster-card.desktop {
+  aspect-ratio: 16 / 9;
+}
+
+.poster-card.mobile {
+  width: min(100%, 340px);
+  aspect-ratio: 4 / 5;
+}
+
+.poster-card-overlay {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 18px;
+  padding: 34px;
+  background:
+    linear-gradient(120deg, rgba(7, 15, 35, 0.82), rgba(7, 15, 35, 0.28) 56%, rgba(7, 15, 35, 0.76));
+  color: #fff;
+}
+
+.poster-card.mobile .poster-card-overlay {
+  grid-template-columns: 1fr;
+  align-content: space-between;
+  padding: 26px;
+}
+
+.poster-card-copy {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.poster-card-copy span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.poster-card-copy strong {
+  max-width: 12em;
+  font-size: 34px;
+  line-height: 1.12;
+  color: #fff;
+}
+
+.poster-card.mobile .poster-card-copy strong {
+  font-size: 27px;
+}
+
+.poster-card-copy small {
+  max-width: 28em;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.poster-card-qr {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.poster-card-qr img {
+  width: 132px;
+  height: 132px;
+  border: none;
+  border-radius: 6px;
+}
+
+.poster-card.mobile .poster-card-qr {
+  width: max-content;
+  justify-self: center;
+}
+
 .modal-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
