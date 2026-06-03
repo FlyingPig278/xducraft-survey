@@ -4,6 +4,7 @@ import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
+import { setDefaultResultOrder } from 'node:dns'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
@@ -34,6 +35,12 @@ const loadEnvFile = (filePath) => {
 loadEnvFile(path.join(rootDir, '.env'))
 loadEnvFile(path.join(rootDir, '.env.local'))
 
+try {
+  setDefaultResultOrder(process.env.BLESSING_DNS_RESULT_ORDER || 'ipv4first')
+} catch (error) {
+  console.warn(`[blessing] DNS result order was not changed: ${error instanceof Error ? error.message : error}`)
+}
+
 const distDir = path.join(rootDir, 'dist')
 const dataDir = process.env.XDUCRAFT_DATA_DIR
   ? path.resolve(process.env.XDUCRAFT_DATA_DIR)
@@ -46,6 +53,10 @@ const blessingClientId = process.env.BLESSING_CLIENT_ID || ''
 const blessingClientSecret = process.env.BLESSING_CLIENT_SECRET || ''
 const blessingRedirectUri = process.env.BLESSING_REDIRECT_URI || `http://localhost:${port}/api/auth/blessing/callback`
 const blessingAdminIds = new Set((process.env.BLESSING_ADMIN_IDS || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean))
+const blessingFetchTimeoutMs = Math.max(1000, Number(process.env.BLESSING_FETCH_TIMEOUT_MS || 8000))
+const blessingFetchRetries = Math.max(0, Number(process.env.BLESSING_FETCH_RETRIES || 2))
+const blessingTokenRetries = Math.max(0, Number(process.env.BLESSING_TOKEN_RETRIES || 0))
+const blessingUserAgent = process.env.BLESSING_USER_AGENT || 'XDUCraft-Survey/0.1'
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
@@ -104,9 +115,66 @@ const parseJsonResponse = async (response) => {
   }
   if (!response.ok) {
     const detail = typeof body === 'object' && body && 'error' in body ? body.error : response.statusText
-    throw new Error(`Blessing Skin 请求失败：${detail}`)
+    const error = new Error(`Blessing Skin 请求失败：${detail}`)
+    error.status = response.status
+    throw error
   }
   return body
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const describeFetchError = (error) => {
+  if (!(error instanceof Error)) return String(error)
+  const cause = error.cause instanceof Error ? `；cause=${error.cause.message}` : ''
+  return `${error.name}: ${error.message}${cause}`
+}
+
+const isTransientBlessingError = (error) => {
+  if (!(error instanceof Error)) return true
+  if (error.status && error.status < 500) return false
+  return ['AbortError', 'TimeoutError', 'TypeError'].includes(error.name) ||
+    error.message.includes('fetch failed') ||
+    error.message.includes('terminated') ||
+    error.message.includes('aborted') ||
+    Number(error.status) >= 500
+}
+
+const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
+  const retries = Math.max(0, Number(options.retries ?? blessingFetchRetries))
+  const attempts = retries + 1
+  let lastError = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), blessingFetchTimeoutMs)
+    const startedAt = Date.now()
+    try {
+      const response = await fetch(blessingUrl(pathname), {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': blessingUserAgent,
+          Connection: 'close',
+          ...init.headers
+        }
+      })
+      const body = await parseJsonResponse(response)
+      if (attempt > 1) {
+        console.log(`[blessing] ${pathname} succeeded on attempt ${attempt} in ${Date.now() - startedAt}ms`)
+      }
+      return body
+    } catch (error) {
+      lastError = error
+      const canRetry = attempt < attempts && isTransientBlessingError(error)
+      console.warn(`[blessing] ${pathname} attempt ${attempt}/${attempts} failed in ${Date.now() - startedAt}ms: ${describeFetchError(error)}`)
+      if (!canRetry) break
+      await sleep(250 * attempt)
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  throw lastError
 }
 
 const exchangeBlessingCode = async (code) => {
@@ -117,19 +185,17 @@ const exchangeBlessingCode = async (code) => {
     redirect_uri: blessingRedirectUri,
     code
   })
-  const response = await fetch(blessingUrl('/oauth/token'), {
+  return fetchBlessingJson('/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString()
-  })
-  return parseJsonResponse(response)
+  }, { retries: blessingTokenRetries })
 }
 
 const fetchBlessingUser = async (accessToken) => {
-  const response = await fetch(blessingUrl('/api/user'), {
+  return fetchBlessingJson('/api/user', {
     headers: { Authorization: `Bearer ${accessToken}` }
   })
-  return parseJsonResponse(response)
 }
 
 const firstText = (...values) => {
@@ -148,7 +214,10 @@ const mapBlessingUser = (profile, requestedRole = 'player') => {
   const blessingUserId = firstText(profile.uid, profile.id, profile.user_id, profile.email, profile.nickname, profile.username, createId('blessing-user'))
   const email = firstText(profile.email)
   const displayName = firstText(profile.nickname, profile.username, profile.name, email.split('@')[0], `用户 ${blessingUserId}`)
-  const gameId = firstText(profile.player_name, profile.gameId, profile.game_id, profile.username, profile.nickname, displayName)
+  const playerNames = Array.isArray(profile.players)
+    ? profile.players.map((player) => firstText(player?.name, player?.player_name, player?.username)).filter(Boolean)
+    : []
+  const gameId = firstText(profile.player_name, profile.gameId, profile.game_id, ...playerNames, profile.username, profile.nickname, displayName)
   const adminKeys = [
     blessingUserId,
     profile.uid,
