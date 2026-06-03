@@ -28,9 +28,14 @@ watch(() => appState.value.surveys.map((s) => s.id).join('|'), () => {
   }
 }, { immediate: true })
 
-watch(() => route.value.mode === 'admin' ? route.value.surveyId : undefined, (routeSurveyId) => {
-  if (routeSurveyId && appState.value.surveys.some((item) => item.id === routeSurveyId)) {
-    adminSurveyId.value = routeSurveyId
+watch(route, (nextRoute) => {
+  if (nextRoute.mode !== 'admin') return
+  if (nextRoute.surveyId && appState.value.surveys.some((item) => item.id === nextRoute.surveyId)) {
+    adminSurveyId.value = nextRoute.surveyId
+    return
+  }
+  if (adminSurveyId.value && nextRoute.surveyId !== adminSurveyId.value) {
+    navigateAdmin(nextRoute.panel, adminSurveyId.value)
   }
 }, { immediate: true })
 

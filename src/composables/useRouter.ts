@@ -28,9 +28,16 @@ export const route = computed(() => parseHash(hash.value))
 export const isAdminRoute = computed(() => route.value.mode === 'admin')
 export const adminPanel = computed(() => route.value.mode === 'admin' ? route.value.panel : 'surveys')
 
-export const navigateSurvey = (id: string) => { window.location.hash = `#/s/${id}` }
+const setHash = (nextHash: string) => {
+  if (window.location.hash !== nextHash) {
+    window.location.hash = nextHash
+  }
+  hash.value = nextHash
+}
+
+export const navigateSurvey = (id: string) => { setHash(`#/s/${id}`) }
 export const navigateAdmin = (panel: AdminPanelKey, surveyId?: string) => {
-  window.location.hash = surveyId ? `#/admin/${panel}/${surveyId}` : `#/admin/${panel}`
+  setHash(surveyId ? `#/admin/${panel}/${surveyId}` : `#/admin/${panel}`)
 }
 export const publicSurveyUrlFor = (id: string) =>
   `${window.location.origin}${window.location.pathname}#/s/${id}`

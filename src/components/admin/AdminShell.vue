@@ -30,6 +30,10 @@ const adminPanels: Array<{ key: AdminPanelKey; label: string; icon: any }> = [
   { key: 'archive', label: '数据留档', icon: Archive }
 ]
 
+const navigatePanel = (panel: AdminPanelKey) => {
+  navigateAdmin(panel, adminSurveyId.value)
+}
+
 const openPublicSurvey = () => {
   window.open(publicSurveyUrlFor(adminSurveyId.value), '_blank', 'noopener,noreferrer')
 }
@@ -49,7 +53,7 @@ const openPublicSurvey = () => {
           :key="panel.key"
           class="admin-nav-btn"
           :class="{ active: adminPanel === panel.key }"
-          @click="navigateAdmin(panel.key)"
+          @click="navigatePanel(panel.key)"
         >
           <component :is="panel.icon" :size="16" :stroke-width="2" />
           <span class="nav-label">{{ panel.label }}</span>
@@ -76,7 +80,7 @@ const openPublicSurvey = () => {
         :key="panel.key"
         class="admin-mobile-nav-btn"
         :class="{ active: adminPanel === panel.key }"
-        @click="navigateAdmin(panel.key)"
+        @click="navigatePanel(panel.key)"
       >
         <component :is="panel.icon" :size="20" :stroke-width="2" />
         <span>{{ panel.label }}</span>
@@ -109,13 +113,11 @@ const openPublicSurvey = () => {
       </div>
 
       <div v-else class="admin-content">
-        <Transition name="panel-fade" mode="out-in">
-          <SurveyPanel v-if="adminPanel === 'surveys'" key="surveys" />
-          <PreviewPanel v-else-if="adminPanel === 'preview'" key="preview" />
-          <FieldsPanel v-else-if="adminPanel === 'fields'" key="fields" />
-          <CandidatesPanel v-else-if="adminPanel === 'candidates'" key="candidates" />
-          <ArchivePanel v-else-if="adminPanel === 'archive'" key="archive" />
-        </Transition>
+        <SurveyPanel v-if="adminPanel === 'surveys'" />
+        <PreviewPanel v-else-if="adminPanel === 'preview'" />
+        <FieldsPanel v-else-if="adminPanel === 'fields'" />
+        <CandidatesPanel v-else-if="adminPanel === 'candidates'" />
+        <ArchivePanel v-else-if="adminPanel === 'archive'" />
       </div>
     </section>
 

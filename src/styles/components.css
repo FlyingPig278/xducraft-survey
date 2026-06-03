@@ -277,16 +277,6 @@
   margin-bottom: 20px;
 }
 
-.panel-fade-enter-active,
-.panel-fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-
-.panel-fade-enter-from,
-.panel-fade-leave-to {
-  opacity: 0;
-}
-
 @media (max-width: 900px) {
   .modal-form-grid,
   .review-card-fields {
