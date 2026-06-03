@@ -62,7 +62,7 @@ const blessingFetchRetries = Math.max(0, Number(process.env.BLESSING_FETCH_RETRI
 const blessingTokenRetries = Math.max(0, Number(process.env.BLESSING_TOKEN_RETRIES || 0))
 const blessingUserAgent = process.env.BLESSING_USER_AGENT || 'XDUCraft-Survey/0.1'
 const blessingIpFamily = Number(process.env.BLESSING_IP_FAMILY || 4)
-const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS !== 'false'
+const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS === 'true'
 const blessingProxyUrl = process.env.BLESSING_PROXY_URL || ''
 const oauthStates = new Map()
 const authTickets = new Map()

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NResult, NSpace, NTag } from 'naive-ui'
-import { LogIn, LogOut, Send } from '../../icons'
+import { LogIn, LogOut, Send, Settings2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAuth } from '../../composables/useAuth'
 import { useRouter } from '../../composables/useRouter'
@@ -15,8 +15,8 @@ import CandidateSubmitModal from './CandidateSubmitModal.vue'
 import GuestNameModal from './GuestNameModal.vue'
 
 const { survey, apiLoading, apiError, surveyById } = useAppState()
-const { currentUser, guestDraft, startOAuthLogin, logout } = useAuth()
-const { route } = useRouter()
+const { currentUser, guestDraft, isAdmin, startOAuthLogin, logout } = useAuth()
+const { route, navigateAdmin } = useRouter()
 const {
   selectedCandidateIds, voteLimit, approvedCandidates,
   showSubmissionSummary, totalVoters, totalSelections,
@@ -57,6 +57,7 @@ const customCandidateHint = computed(() =>
 
 const isClosed = computed(() => survey.value.status === 'closed')
 const isDraft = computed(() => survey.value.status === 'draft')
+const openAdminPanel = () => { navigateAdmin('surveys') }
 </script>
 
 <template>
@@ -69,6 +70,10 @@ const isDraft = computed(() => survey.value.status === 'draft')
         </n-tag>
         <template v-if="currentUser">
           <n-tag :bordered="false" size="small">{{ currentUser.displayName }}</n-tag>
+          <n-button v-if="isAdmin" size="small" quaternary @click="openAdminPanel">
+            <template #icon><Settings2 :size="14" /></template>
+            管理后台
+          </n-button>
           <n-button size="small" quaternary @click="logout">
             <template #icon><LogOut :size="14" /></template>
             退出
