@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { setDefaultResultOrder } from 'node:dns'
+import { connect as tlsConnect } from 'node:tls'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
@@ -62,6 +63,7 @@ const blessingTokenRetries = Math.max(0, Number(process.env.BLESSING_TOKEN_RETRI
 const blessingUserAgent = process.env.BLESSING_USER_AGENT || 'XDUCraft-Survey/0.1'
 const blessingIpFamily = Number(process.env.BLESSING_IP_FAMILY || 4)
 const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS !== 'false'
+const blessingProxyUrl = process.env.BLESSING_PROXY_URL || ''
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
@@ -149,7 +151,18 @@ const isTransientBlessingError = (error) => {
     Number(error.status) >= 500
 }
 
-const requestBlessingOnce = (pathname, init = {}) => new Promise((resolve, reject) => {
+const createTimeoutError = () => {
+  const error = new Error(`request timed out after ${blessingFetchTimeoutMs}ms`)
+  error.name = 'TimeoutError'
+  return error
+}
+
+const proxyAuthHeader = (proxy) => {
+  if (!proxy.username && !proxy.password) return undefined
+  return `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`
+}
+
+const buildBlessingRequest = (pathname, init = {}) => {
   const url = new URL(pathname, `${blessingBaseUrl}/`)
   const body = init.body ?? ''
   const headers = {
@@ -162,9 +175,59 @@ const requestBlessingOnce = (pathname, init = {}) => new Promise((resolve, rejec
   if (typeof body === 'string' || Buffer.isBuffer(body)) {
     headers['Content-Length'] = Buffer.byteLength(body)
   }
+  return { url, body, headers, method: init.method ?? 'GET' }
+}
 
+const decodeChunkedBody = (buffer) => {
+  const chunks = []
+  let offset = 0
+  while (offset < buffer.length) {
+    const marker = buffer.indexOf('\r\n', offset, 'utf8')
+    if (marker < 0) break
+    const sizeText = buffer.subarray(offset, marker).toString('utf8').split(';')[0]
+    const size = Number.parseInt(sizeText, 16)
+    if (!Number.isFinite(size)) break
+    offset = marker + 2
+    if (size === 0) break
+    chunks.push(buffer.subarray(offset, offset + size))
+    offset += size + 2
+  }
+  return Buffer.concat(chunks)
+}
+
+const parseRawHttpResponse = (buffer) => {
+  const separator = buffer.indexOf('\r\n\r\n', 0, 'utf8')
+  if (separator < 0) {
+    const error = new Error('Blessing Skin 响应格式异常')
+    error.status = 0
+    throw error
+  }
+  const headerText = buffer.subarray(0, separator).toString('utf8')
+  const bodyBuffer = buffer.subarray(separator + 4)
+  const headerLines = headerText.split('\r\n')
+  const statusLine = headerLines[0] ?? ''
+  const match = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)\s*(.*)$/)
+  if (!match) {
+    const error = new Error('Blessing Skin 响应状态异常')
+    error.status = 0
+    throw error
+  }
+  const responseHeaders = new Map()
+  headerLines.slice(1).forEach((line) => {
+    const index = line.indexOf(':')
+    if (index > 0) responseHeaders.set(line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim())
+  })
+  const decodedBody = responseHeaders.get('transfer-encoding')?.toLowerCase().includes('chunked')
+    ? decodeChunkedBody(bodyBuffer)
+    : bodyBuffer
+  const bodyText = decodedBody.toString('utf8')
+  return parseJsonPayload(Number(match[1]), match[2] || '', bodyText)
+}
+
+const requestBlessingDirect = (pathname, init = {}) => new Promise((resolve, reject) => {
+  const { url, body, headers, method } = buildBlessingRequest(pathname, init)
   const requestOptions = {
-    method: init.method ?? 'GET',
+    method,
     headers,
     timeout: blessingFetchTimeoutMs
   }
@@ -191,15 +254,107 @@ const requestBlessingOnce = (pathname, init = {}) => new Promise((resolve, rejec
     })
   })
 
+  const absoluteTimeout = setTimeout(() => {
+    req.destroy(createTimeoutError())
+  }, blessingFetchTimeoutMs)
   req.on('timeout', () => {
-    const error = new Error(`request timed out after ${blessingFetchTimeoutMs}ms`)
-    error.name = 'TimeoutError'
-    req.destroy(error)
+    req.destroy(createTimeoutError())
   })
-  req.on('error', reject)
+  req.on('error', (error) => {
+    clearTimeout(absoluteTimeout)
+    reject(error)
+  })
+  req.on('close', () => {
+    clearTimeout(absoluteTimeout)
+  })
   if (body) req.write(body)
   req.end()
 })
+
+const requestBlessingViaProxy = (pathname, init = {}) => new Promise((resolve, reject) => {
+  const { url, body, headers, method } = buildBlessingRequest(pathname, init)
+  const proxy = new URL(blessingProxyUrl)
+  if (url.protocol !== 'https:') {
+    reject(new Error('BLESSING_PROXY_URL currently supports HTTPS targets only'))
+    return
+  }
+  const targetPort = url.port || '443'
+  const connectHeaders = { Host: `${url.hostname}:${targetPort}` }
+  const auth = proxyAuthHeader(proxy)
+  if (auth) connectHeaders['Proxy-Authorization'] = auth
+
+  const connectReq = httpRequest({
+    hostname: proxy.hostname,
+    port: proxy.port || 8080,
+    method: 'CONNECT',
+    path: `${url.hostname}:${targetPort}`,
+    headers: connectHeaders,
+    timeout: blessingFetchTimeoutMs
+  })
+
+  let tunnelSocket = null
+  const absoluteTimeout = setTimeout(() => {
+    const error = createTimeoutError()
+    if (tunnelSocket) tunnelSocket.destroy(error)
+    else connectReq.destroy(error)
+  }, blessingFetchTimeoutMs)
+
+  connectReq.on('connect', (proxyRes, socket) => {
+    if ((proxyRes.statusCode ?? 0) < 200 || (proxyRes.statusCode ?? 0) >= 300) {
+      clearTimeout(absoluteTimeout)
+      socket.destroy()
+      const error = new Error(`代理连接失败：${proxyRes.statusCode} ${proxyRes.statusMessage || ''}`.trim())
+      error.status = proxyRes.statusCode
+      reject(error)
+      return
+    }
+
+    tunnelSocket = socket
+    const tlsSocket = tlsConnect({ socket, servername: url.hostname }, () => {
+      tunnelSocket = tlsSocket
+      const pathWithQuery = `${url.pathname}${url.search}`
+      const requestHeaders = {
+        ...headers,
+        Host: url.host
+      }
+      tlsSocket.write(`${method} ${pathWithQuery} HTTP/1.1\r\n`)
+      Object.entries(requestHeaders).forEach(([key, value]) => {
+        tlsSocket.write(`${key}: ${value}\r\n`)
+      })
+      tlsSocket.write('\r\n')
+      if (body) tlsSocket.write(body)
+    })
+
+    const chunks = []
+    tlsSocket.on('data', (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    tlsSocket.on('end', () => {
+      clearTimeout(absoluteTimeout)
+      try {
+        resolve(parseRawHttpResponse(Buffer.concat(chunks)))
+      } catch (error) {
+        reject(error)
+      }
+    })
+    tlsSocket.on('error', (error) => {
+      clearTimeout(absoluteTimeout)
+      reject(error)
+    })
+  })
+
+  connectReq.on('timeout', () => {
+    connectReq.destroy(createTimeoutError())
+  })
+  connectReq.on('error', (error) => {
+    clearTimeout(absoluteTimeout)
+    reject(error)
+  })
+  connectReq.end()
+})
+
+const requestBlessingOnce = (pathname, init = {}) =>
+  blessingProxyUrl ? requestBlessingViaProxy(pathname, init) : requestBlessingDirect(pathname, init)
 
 const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
   const retries = Math.max(0, Number(options.retries ?? blessingFetchRetries))
