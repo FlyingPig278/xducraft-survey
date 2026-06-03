@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { CirclePlay, Download, Info } from 'lucide-vue-next'
 import {
   NAlert,
   NButton,
@@ -891,13 +892,19 @@ const downloadFile = (name: string, content: string, type: string) => {
                       <div class="result-item-title">{{ row.candidate.title }}</div>
                       <n-popover v-if="candidateIntro(row.candidate)" trigger="hover" placement="top" style="max-width: 320px">
                         <template #trigger>
-                          <button class="info-dot" type="button" @click.stop>i</button>
+                          <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
+                            <Info :size="15" :stroke-width="2" aria-hidden="true" />
+                          </button>
                         </template>
                         <div class="candidate-intro">{{ candidateIntro(row.candidate) }}</div>
                       </n-popover>
                       <span v-if="candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" class="candidate-card-actions">
-                        <button v-if="candidatePackUrl(row.candidate)" class="candidate-icon-btn is-download" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click="openExternal(candidatePackUrl(row.candidate))"></button>
-                        <button v-if="candidateVideoUrl(row.candidate)" class="candidate-icon-btn is-video" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click="openExternal(candidateVideoUrl(row.candidate))"></button>
+                        <button v-if="candidatePackUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click="openExternal(candidatePackUrl(row.candidate))">
+                          <Download :size="15" :stroke-width="2" aria-hidden="true" />
+                        </button>
+                        <button v-if="candidateVideoUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click="openExternal(candidateVideoUrl(row.candidate))">
+                          <CirclePlay :size="15" :stroke-width="2" aria-hidden="true" />
+                        </button>
                       </span>
                     </div>
                     <div class="result-item-meta">{{ candidateMeta(row.candidate) || '未填写补充信息' }}</div>
@@ -932,13 +939,19 @@ const downloadFile = (name: string, content: string, type: string) => {
                     <div class="candidate-card-title">{{ candidate.title }}</div>
                     <n-popover v-if="candidateIntro(candidate)" trigger="hover" placement="top" style="max-width: 320px">
                       <template #trigger>
-                        <button class="info-dot" type="button" @click.stop>i</button>
+                        <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
+                          <Info :size="15" :stroke-width="2" aria-hidden="true" />
+                        </button>
                       </template>
                       <div class="candidate-intro">{{ candidateIntro(candidate) }}</div>
                     </n-popover>
                     <span v-if="candidatePackUrl(candidate) || candidateVideoUrl(candidate)" class="candidate-card-actions">
-                      <button v-if="candidatePackUrl(candidate)" class="candidate-icon-btn is-download" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(candidatePackUrl(candidate))"></button>
-                      <button v-if="candidateVideoUrl(candidate)" class="candidate-icon-btn is-video" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(candidateVideoUrl(candidate))"></button>
+                      <button v-if="candidatePackUrl(candidate)" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(candidatePackUrl(candidate))">
+                        <Download :size="15" :stroke-width="2" aria-hidden="true" />
+                      </button>
+                      <button v-if="candidateVideoUrl(candidate)" class="candidate-icon-btn" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(candidateVideoUrl(candidate))">
+                        <CirclePlay :size="15" :stroke-width="2" aria-hidden="true" />
+                      </button>
                     </span>
                   </div>
                   <div class="candidate-card-meta">{{ candidateMeta(candidate) || '未填写补充信息' }}</div>
@@ -1214,13 +1227,19 @@ const downloadFile = (name: string, content: string, type: string) => {
                           <div class="candidate-card-title">{{ c.title }}</div>
                           <n-popover v-if="candidateIntro(c)" trigger="hover" placement="top" style="max-width: 320px">
                             <template #trigger>
-                              <button class="info-dot" type="button" @click.stop>i</button>
+                              <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
+                                <Info :size="15" :stroke-width="2" aria-hidden="true" />
+                              </button>
                             </template>
                             <div class="candidate-intro">{{ candidateIntro(c) }}</div>
                           </n-popover>
                           <span v-if="candidatePackUrl(c) || candidateVideoUrl(c)" class="candidate-card-actions">
-                            <button v-if="candidatePackUrl(c)" class="candidate-icon-btn is-download" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(candidatePackUrl(c))"></button>
-                            <button v-if="candidateVideoUrl(c)" class="candidate-icon-btn is-video" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(candidateVideoUrl(c))"></button>
+                            <button v-if="candidatePackUrl(c)" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(candidatePackUrl(c))">
+                              <Download :size="15" :stroke-width="2" aria-hidden="true" />
+                            </button>
+                            <button v-if="candidateVideoUrl(c)" class="candidate-icon-btn" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(candidateVideoUrl(c))">
+                              <CirclePlay :size="15" :stroke-width="2" aria-hidden="true" />
+                            </button>
                           </span>
                         </div>
                         <div class="candidate-card-meta">{{ candidateMeta(c) || '未填写补充信息' }}</div>

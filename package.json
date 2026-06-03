@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.3",
+    "lucide-vue-next": "^0.577.0",
     "naive-ui": "^2.44.1",
     "vite": "^7.2.7",
     "vue": "^3.5.25"
