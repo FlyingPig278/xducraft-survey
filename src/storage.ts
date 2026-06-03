@@ -1,9 +1,9 @@
 import type {
   AppState,
+  AuthUser,
   AuditLog,
   Candidate,
   FieldDefinition,
-  MockUser,
   SurveyDefinition,
   VoteRecord
 } from './types'
@@ -83,7 +83,7 @@ const seedCandidates: Candidate[] = [
       videoUrl: 'https://www.bilibili.com/',
       notes: '内容覆盖面广，适合长期推进。'
     },
-    submitterUserId: 'mock-steve',
+    submitterUserId: 'seed-steve',
     submitterName: 'Steve',
     createdAt: now(),
     reviewedAt: now(),
@@ -103,7 +103,7 @@ const seedCandidates: Candidate[] = [
       videoUrl: '',
       notes: '机械动力主线清晰，适合多人分工。'
     },
-    submitterUserId: 'mock-alex',
+    submitterUserId: 'seed-alex',
     submitterName: 'Alex',
     createdAt: now(),
     reviewedAt: now(),
@@ -123,7 +123,7 @@ const seedCandidates: Candidate[] = [
       videoUrl: '',
       notes: '比较接近原版体验，入门门槛低。'
     },
-    submitterUserId: 'mock-herobrine',
+    submitterUserId: 'seed-herobrine',
     submitterName: 'Herobrine',
     createdAt: now(),
     reviewedAt: now(),
@@ -143,7 +143,7 @@ const seedCandidates: Candidate[] = [
       videoUrl: '',
       notes: '科技线紧凑，想试试现代工业路线。'
     },
-    submitterUserId: 'mock-guest',
+    submitterUserId: 'seed-guest',
     submitterName: 'Guest',
     createdAt: now()
   }
@@ -153,7 +153,7 @@ const seedVotes: VoteRecord[] = [
   {
     id: 'vote-steve',
     surveyId: seedSurvey.id,
-    userId: 'mock-steve',
+    userId: 'seed-steve',
     userName: 'Steve',
     gameId: 'Steve',
     candidateIds: ['candidate-atm10', 'candidate-create'],
@@ -164,7 +164,7 @@ const seedVotes: VoteRecord[] = [
   {
     id: 'vote-alex',
     surveyId: seedSurvey.id,
-    userId: 'mock-alex',
+    userId: 'seed-alex',
     userName: 'Alex',
     gameId: 'Alex',
     candidateIds: ['candidate-create'],
@@ -175,7 +175,7 @@ const seedVotes: VoteRecord[] = [
   {
     id: 'vote-builder',
     surveyId: seedSurvey.id,
-    userId: 'mock-builder',
+    userId: 'seed-builder',
     userName: 'Builder',
     gameId: 'Builder',
     candidateIds: ['candidate-bcg', 'candidate-atm10'],
@@ -203,18 +203,23 @@ export const createSeedState = (): AppState => ({
   auditLogs: [...seedLogs]
 })
 
-export const loadUser = (): MockUser | null => {
+export const loadUser = (): AuthUser | null => {
   const raw = localStorage.getItem(USER_KEY)
   if (!raw) return null
 
   try {
-    return JSON.parse(raw) as MockUser
+    const user = JSON.parse(raw) as AuthUser
+    if (user.authProvider !== 'blessing') {
+      localStorage.removeItem(USER_KEY)
+      return null
+    }
+    return user
   } catch {
     return null
   }
 }
 
-export const saveUser = (user: MockUser | null) => {
+export const saveUser = (user: AuthUser | null) => {
   if (!user) {
     localStorage.removeItem(USER_KEY)
     return

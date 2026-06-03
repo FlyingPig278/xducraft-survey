@@ -71,12 +71,12 @@ export interface VoteRecord {
   history: VoteSnapshot[]
 }
 
-export interface MockUser {
+export interface AuthUser {
   id: string
   displayName: string
   gameId: string
   role: UserRole
-  authProvider?: 'mock' | 'blessing'
+  authProvider: 'blessing'
   blessingUserId?: string
 }
 

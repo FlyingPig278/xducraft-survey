@@ -1,7 +1,11 @@
 .admin-shell {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.admin-shell-locked {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .admin-sidebar {
@@ -10,6 +14,10 @@
   padding: 24px 0;
   display: flex;
   flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .admin-sidebar-brand {
@@ -38,6 +46,7 @@
   gap: 2px;
   padding: 0 8px;
   flex: 1;
+  overflow-y: auto;
 }
 
 .admin-nav-btn {
@@ -111,8 +120,24 @@
   overflow-y: auto;
 }
 
+.admin-shell-locked .admin-main {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+}
+
 .admin-content {
   max-width: 1100px;
+}
+
+.admin-login-panel {
+  width: min(440px, 100%);
+}
+
+.admin-login-copy {
+  color: #64748b;
+  margin: 0 0 20px;
+  line-height: 1.6;
 }
 
 .admin-section-header {
@@ -141,6 +166,62 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.survey-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.survey-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.survey-list-item:hover {
+  border-color: #a6e3e9;
+  background: #f8feff;
+}
+
+.survey-list-item.active {
+  border-color: #71c9ce;
+  background: #f0fcfd;
+}
+
+.survey-list-main {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.survey-list-title {
+  color: #0f172a;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.survey-list-meta,
+.survey-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.survey-list-meta {
+  color: #64748b;
+  font-size: 12px;
 }
 
 /* Mobile: bottom tab bar */
@@ -224,5 +305,14 @@
   .admin-section-header-actions {
     width: 100%;
     overflow-x: auto;
+  }
+
+  .survey-list-item {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .survey-list-actions {
+    justify-content: flex-start;
   }
 }

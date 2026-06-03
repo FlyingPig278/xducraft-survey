@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput } from 'naive-ui'
+import { NAlert, NButton, NCard } from 'naive-ui'
 import {
-  ClipboardList, Eye, Settings2, CheckSquare, Archive,
-  LogOut
+  ClipboardList, Settings2, CheckSquare, Archive,
+  LogIn, LogOut
 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAuth } from '../../composables/useAuth'
@@ -18,13 +17,12 @@ import CandidatesPanel from './CandidatesPanel.vue'
 import ArchivePanel from './ArchivePanel.vue'
 
 const { apiLoading, apiError, adminSurveyId } = useAppState()
-const { currentUser, loginDraft, isAdmin, loginAs, startOAuthLogin, logout } = useAuth()
+const { currentUser, isAdmin, startOAuthLogin, logout } = useAuth()
 const { adminPanel, navigateAdmin } = useRouter()
 const { pendingCandidateCount } = useAdminCandidates()
 
 const adminPanels: Array<{ key: AdminPanelKey; label: string; icon: any }> = [
   { key: 'surveys', label: '问卷管理', icon: ClipboardList },
-  { key: 'preview', label: '发布预览', icon: Eye },
   { key: 'fields', label: '字段配置', icon: Settings2 },
   { key: 'candidates', label: '候选审核', icon: CheckSquare },
   { key: 'archive', label: '数据留档', icon: Archive }
@@ -40,9 +38,9 @@ const openPublicSurvey = () => {
 </script>
 
 <template>
-  <main class="admin-shell">
+  <main class="admin-shell" :class="{ 'admin-shell-locked': !isAdmin }">
     <!-- Desktop sidebar -->
-    <aside class="admin-sidebar">
+    <aside v-if="isAdmin" class="admin-sidebar">
       <div class="admin-sidebar-brand">
         <strong>XDUCraft Survey</strong>
         <span>管理后台</span>
@@ -74,7 +72,7 @@ const openPublicSurvey = () => {
     </aside>
 
     <!-- Mobile bottom tab bar -->
-    <nav class="admin-mobile-nav">
+    <nav v-if="isAdmin" class="admin-mobile-nav">
       <button
         v-for="panel in adminPanels"
         :key="panel.key"
@@ -96,20 +94,22 @@ const openPublicSurvey = () => {
         正在同步后台数据...
       </n-alert>
 
-      <!-- Admin login -->
-      <div v-if="!isAdmin" class="admin-content" style="max-width: 440px">
-        <n-card title="管理员登录">
-          <p style="color: #64748b; margin: 0 0 20px">可使用 Blessing Skin OAuth2 登录后台。未配置时仍可用 mock 身份本地调试。</p>
-          <n-button type="primary" block @click="startOAuthLogin('admin')" style="margin-bottom: 18px">使用 Blessing Skin 登录</n-button>
-          <n-form label-placement="top" :show-feedback="false">
-            <n-form-item label="显示名">
-              <n-input v-model:value="loginDraft.displayName" />
-            </n-form-item>
-            <n-form-item label="游戏 ID">
-              <n-input v-model:value="loginDraft.gameId" />
-            </n-form-item>
-            <n-button block @click="loginAs('admin')" style="margin-top: 8px">使用 mock 身份进入后台</n-button>
-          </n-form>
+      <div v-if="!isAdmin" class="admin-login-panel">
+        <n-card title="管理员登录" size="large">
+          <n-alert v-if="currentUser" type="warning" :bordered="false" style="margin-bottom: 16px">
+            当前账号「{{ currentUser.displayName }}」已登录，但没有管理员权限。请确认 .env 中的 BLESSING_ADMIN_IDS 是否包含该账号的 uid、邮箱、昵称或游戏名。
+          </n-alert>
+          <p class="admin-login-copy">
+            后台仅允许 Blessing Skin OAuth2 管理员白名单账号进入。
+          </p>
+          <n-button type="primary" block @click="startOAuthLogin('admin')">
+            <template #icon><LogIn :size="15" /></template>
+            使用 Blessing Skin 登录
+          </n-button>
+          <n-button v-if="currentUser" block quaternary style="margin-top: 10px" @click="logout">
+            <template #icon><LogOut :size="15" /></template>
+            退出当前账号
+          </n-button>
         </n-card>
       </div>
 
@@ -122,6 +122,6 @@ const openPublicSurvey = () => {
       </div>
     </section>
 
-    <SurveyCreateModal />
+    <SurveyCreateModal v-if="isAdmin" />
   </main>
 </template>

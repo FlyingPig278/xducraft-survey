@@ -5,8 +5,9 @@ import { Plus, Save, Copy, Eye, Settings2, RotateCcw } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
 import { navigateAdmin, publicSurveyUrlFor } from '../../composables/useRouter'
+import { statusLabel, statusTagType } from '../../composables/useCandidateFields'
 
-const { survey, adminSurveyId, surveys, resetDemo } = useAppState()
+const { appState, survey, adminSurveyId, surveys, resetDemo } = useAppState()
 const {
   surveySettingsDraft, surveyCreateModalOpen,
   surveySettingsDirty, surveyHasVotes,
@@ -24,6 +25,11 @@ const resultVisibilityOptions = [
 
 const publicSurveyUrl = computed(() => publicSurveyUrlFor(survey.value.id))
 const publicSurveyQrUrl = computed(() => `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(publicSurveyUrl.value)}`)
+const surveyRows = computed(() => surveys.value.map((item) => {
+  const votes = appState.value.votes.filter((vote) => vote.surveyId === item.id).length
+  const candidates = appState.value.candidates.filter((candidate) => candidate.surveyId === item.id).length
+  return { item, votes, candidates }
+}))
 
 const copyPublicLink = async () => {
   try { await navigator.clipboard.writeText(publicSurveyUrl.value) } catch { /* noop */ }
@@ -32,6 +38,10 @@ const copyPublicLink = async () => {
 const openPreview = async () => {
   if (surveySettingsDirty.value) await saveSurveySettings('问卷设置已保存')
   navigateAdmin('preview', adminSurveyId.value)
+}
+
+const selectSurvey = (surveyId: string) => {
+  adminSurveyId.value = surveyId
 }
 </script>
 
@@ -54,6 +64,30 @@ const openPreview = async () => {
   </div>
 
   <n-card size="small">
+    <div class="survey-list">
+      <div
+        v-for="row in surveyRows"
+        :key="row.item.id"
+        class="survey-list-item"
+        :class="{ active: row.item.id === adminSurveyId }"
+        @click="selectSurvey(row.item.id)"
+      >
+        <span class="survey-list-main">
+          <span class="survey-list-title">{{ row.item.title }}</span>
+          <span class="survey-list-meta">
+            <n-tag :type="statusTagType(row.item.status)" size="small" round>{{ statusLabel(row.item.status) }}</n-tag>
+            <span>{{ row.votes }} 票</span>
+            <span>{{ row.candidates }} 候选</span>
+            <span>{{ row.item.voteMode === 'single' ? '单选' : `最多 ${row.item.maxVotes} 项` }}</span>
+          </span>
+        </span>
+        <span class="survey-list-actions">
+          <n-button size="tiny" secondary @click.stop="navigateAdmin('fields', row.item.id)">字段</n-button>
+          <n-button size="tiny" secondary @click.stop="navigateAdmin('preview', row.item.id)">预览</n-button>
+        </span>
+      </div>
+    </div>
+
     <n-form label-placement="top" :show-feedback="false">
       <n-form-item label="选择问卷">
         <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" />

@@ -1,12 +1,11 @@
 import { computed, reactive, ref } from 'vue'
-import type { MockUser, UserRole } from '../types'
+import type { AuthUser, UserRole } from '../types'
 import { loadUser, saveUser } from '../storage'
 import { surveyApi } from '../api'
 import { useAppState } from './useAppState'
 
-const currentUser = ref<MockUser | null>(loadUser())
+const currentUser = ref<AuthUser | null>(loadUser())
 const guestDraft = reactive({ gameId: '' })
-const loginDraft = reactive({ displayName: 'Steve', gameId: 'Steve' })
 const guestNameModalOpen = ref(false)
 let guestNameResolve: ((confirmed: boolean) => void) | null = null
 
@@ -25,18 +24,6 @@ export function useAuth() {
   const anonymousGameId = () => guestDraft.gameId.trim()
   const currentActorName = () => currentUser.value?.displayName ?? (anonymousGameId() || '匿名玩家')
   const currentGameId = () => currentUser.value?.gameId ?? anonymousGameId()
-
-  const loginAs = async (role: UserRole) => {
-    const displayName = loginDraft.displayName.trim() || loginDraft.gameId.trim() || 'Player'
-    const gameId = loginDraft.gameId.trim() || displayName
-    try {
-      currentUser.value = await surveyApi.mockLogin({ displayName, gameId, role })
-      saveUser(currentUser.value)
-      message.success(role === 'admin' ? '已切换为管理员身份' : '已登录')
-    } catch {
-      message.error('登录失败，请确认 API 服务已启动。')
-    }
-  }
 
   const removeAuthQueryParams = () => {
     const url = new URL(window.location.href)
@@ -58,7 +45,13 @@ export function useAuth() {
     try {
       currentUser.value = await surveyApi.consumeBlessingTicket(ticket!)
       saveUser(currentUser.value)
-      message.success('已通过 Blessing Skin 登录')
+      if (currentUser.value.role === 'admin') {
+        message.success('已登录管理员账号')
+      } else if (window.location.hash.startsWith('#/admin')) {
+        message.warning('登录成功，但当前账号没有管理员权限。')
+      } else {
+        message.success('已登录')
+      }
     } catch {
       message.error('登录状态读取失败，请重新登录。')
     }
@@ -68,15 +61,13 @@ export function useAuth() {
     try {
       const status = await surveyApi.blessingAuthStatus()
       if (!status.enabled) {
-        message.warning('Blessing Skin OAuth 未配置，暂时使用 mock 登录。')
-        await loginAs(role)
+        message.error('Blessing Skin OAuth 未配置，无法登录。')
         return
       }
       const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
       window.location.href = surveyApi.blessingLoginUrl(returnTo, role)
     } catch {
-      message.warning('无法读取 OAuth 配置，暂时使用 mock 登录。')
-      await loginAs(role)
+      message.error('无法读取 OAuth 配置，请确认 API 服务已启动。')
     }
   }
 
@@ -103,14 +94,12 @@ export function useAuth() {
   return {
     currentUser,
     guestDraft,
-    loginDraft,
     guestNameModalOpen,
     isAdmin,
     effectiveUserId,
     anonymousGameId,
     currentActorName,
     currentGameId,
-    loginAs,
     startOAuthLogin,
     consumeAuthRedirect,
     logout,

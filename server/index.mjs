@@ -544,7 +544,7 @@ const createSeedState = () => {
           videoUrl: 'https://www.bilibili.com/',
           notes: '内容覆盖面广，适合长期推进。'
         },
-        submitterUserId: 'mock-steve',
+        submitterUserId: 'seed-steve',
         submitterName: 'Steve',
         createdAt: ts,
         reviewedAt: ts,
@@ -564,7 +564,7 @@ const createSeedState = () => {
           videoUrl: '',
           notes: '机械动力主线清晰，适合多人分工。'
         },
-        submitterUserId: 'mock-alex',
+        submitterUserId: 'seed-alex',
         submitterName: 'Alex',
         createdAt: ts,
         reviewedAt: ts,
@@ -584,7 +584,7 @@ const createSeedState = () => {
           videoUrl: '',
           notes: '比较接近原版体验，入门门槛低。'
         },
-        submitterUserId: 'mock-herobrine',
+        submitterUserId: 'seed-herobrine',
         submitterName: 'Herobrine',
         createdAt: ts,
         reviewedAt: ts,
@@ -604,7 +604,7 @@ const createSeedState = () => {
           videoUrl: '',
           notes: '科技线紧凑，想试试现代工业路线。'
         },
-        submitterUserId: 'mock-guest',
+        submitterUserId: 'seed-guest',
         submitterName: 'Guest',
         createdAt: ts
       }
@@ -613,7 +613,7 @@ const createSeedState = () => {
       {
         id: 'vote-steve',
         surveyId: survey.id,
-        userId: 'mock-steve',
+        userId: 'seed-steve',
         userName: 'Steve',
         gameId: 'Steve',
         candidateIds: ['candidate-atm10', 'candidate-create'],
@@ -624,7 +624,7 @@ const createSeedState = () => {
       {
         id: 'vote-alex',
         surveyId: survey.id,
-        userId: 'mock-alex',
+        userId: 'seed-alex',
         userName: 'Alex',
         gameId: 'Alex',
         candidateIds: ['candidate-create'],
@@ -635,7 +635,7 @@ const createSeedState = () => {
       {
         id: 'vote-builder',
         surveyId: survey.id,
-        userId: 'mock-builder',
+        userId: 'seed-builder',
         userName: 'Builder',
         gameId: 'Builder',
         candidateIds: ['candidate-bcg', 'candidate-atm10'],
@@ -884,21 +884,6 @@ const handleApi = async (req, res, pathname) => {
 
   if (pathname === '/api/reset' && req.method === 'POST') {
     sendJson(res, 200, await saveState(createSeedState()))
-    return
-  }
-
-  if (pathname === '/api/auth/mock-login' && req.method === 'POST') {
-    const body = await readJsonBody(req)
-    const displayName = String(body.displayName || body.gameId || 'Player').trim()
-    const gameId = String(body.gameId || displayName).trim()
-    const normalizedId = gameId.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9_:-]/g, '-') || createId('user')
-    sendJson(res, 200, {
-      id: body.role === 'admin' ? 'mock-admin' : `mock-${normalizedId}`,
-      displayName: body.role === 'admin' ? `${displayName} 管理员` : displayName,
-      gameId,
-      role: body.role === 'admin' ? 'admin' : 'player',
-      authProvider: 'mock'
-    })
     return
   }
 
