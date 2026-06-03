@@ -1,4 +1,6 @@
 import { createServer } from 'node:http'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -52,11 +54,14 @@ const blessingBaseUrl = (process.env.BLESSING_BASE_URL || '').replace(/\/+$/, ''
 const blessingClientId = process.env.BLESSING_CLIENT_ID || ''
 const blessingClientSecret = process.env.BLESSING_CLIENT_SECRET || ''
 const blessingRedirectUri = process.env.BLESSING_REDIRECT_URI || `http://localhost:${port}/api/auth/blessing/callback`
+const blessingOAuthScope = process.env.BLESSING_OAUTH_SCOPE ?? ''
 const blessingAdminIds = new Set((process.env.BLESSING_ADMIN_IDS || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean))
 const blessingFetchTimeoutMs = Math.max(1000, Number(process.env.BLESSING_FETCH_TIMEOUT_MS || 8000))
 const blessingFetchRetries = Math.max(0, Number(process.env.BLESSING_FETCH_RETRIES || 2))
 const blessingTokenRetries = Math.max(0, Number(process.env.BLESSING_TOKEN_RETRIES || 0))
 const blessingUserAgent = process.env.BLESSING_USER_AGENT || 'XDUCraft-Survey/0.1'
+const blessingIpFamily = Number(process.env.BLESSING_IP_FAMILY || 4)
+const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS !== 'false'
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
@@ -103,8 +108,7 @@ const redirectToFrontend = (res, returnTo, params) => {
 
 const blessingUrl = (pathname) => new URL(pathname, `${blessingBaseUrl}/`).toString()
 
-const parseJsonResponse = async (response) => {
-  const text = await response.text()
+const parseJsonPayload = (statusCode, statusMessage, text) => {
   let body = {}
   if (text) {
     try {
@@ -113,10 +117,15 @@ const parseJsonResponse = async (response) => {
       body = { raw: text }
     }
   }
-  if (!response.ok) {
-    const detail = typeof body === 'object' && body && 'error' in body ? body.error : response.statusText
+  if (typeof body === 'object' && body && Number(body.code) === 403) {
+    const error = new Error(`Blessing Skin 请求失败：${body.message || body.error || '权限不足'}`)
+    error.status = 403
+    throw error
+  }
+  if (statusCode < 200 || statusCode >= 300) {
+    const detail = typeof body === 'object' && body && 'error' in body ? body.error : statusMessage
     const error = new Error(`Blessing Skin 请求失败：${detail}`)
-    error.status = response.status
+    error.status = statusCode
     throw error
   }
   return body
@@ -140,26 +149,66 @@ const isTransientBlessingError = (error) => {
     Number(error.status) >= 500
 }
 
+const requestBlessingOnce = (pathname, init = {}) => new Promise((resolve, reject) => {
+  const url = new URL(pathname, `${blessingBaseUrl}/`)
+  const body = init.body ?? ''
+  const headers = {
+    Accept: 'application/json',
+    'User-Agent': blessingUserAgent,
+    'Accept-Encoding': 'identity',
+    Connection: 'close',
+    ...init.headers
+  }
+  if (typeof body === 'string' || Buffer.isBuffer(body)) {
+    headers['Content-Length'] = Buffer.byteLength(body)
+  }
+
+  const requestOptions = {
+    method: init.method ?? 'GET',
+    headers,
+    timeout: blessingFetchTimeoutMs
+  }
+  if (blessingIpFamily === 4 || blessingIpFamily === 6) {
+    requestOptions.family = blessingIpFamily
+  }
+
+  const transport = url.protocol === 'http:' ? httpRequest : httpsRequest
+  const req = transport(url, requestOptions, (response) => {
+    const chunks = []
+    response.on('data', (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    response.on('end', () => {
+      try {
+        resolve(parseJsonPayload(
+          response.statusCode ?? 0,
+          response.statusMessage ?? '',
+          Buffer.concat(chunks).toString('utf8')
+        ))
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
+
+  req.on('timeout', () => {
+    const error = new Error(`request timed out after ${blessingFetchTimeoutMs}ms`)
+    error.name = 'TimeoutError'
+    req.destroy(error)
+  })
+  req.on('error', reject)
+  if (body) req.write(body)
+  req.end()
+})
+
 const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
   const retries = Math.max(0, Number(options.retries ?? blessingFetchRetries))
   const attempts = retries + 1
   let lastError = null
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), blessingFetchTimeoutMs)
     const startedAt = Date.now()
     try {
-      const response = await fetch(blessingUrl(pathname), {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': blessingUserAgent,
-          Connection: 'close',
-          ...init.headers
-        }
-      })
-      const body = await parseJsonResponse(response)
+      const body = await requestBlessingOnce(pathname, init)
       if (attempt > 1) {
         console.log(`[blessing] ${pathname} succeeded on attempt ${attempt} in ${Date.now() - startedAt}ms`)
       }
@@ -170,8 +219,6 @@ const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
       console.warn(`[blessing] ${pathname} attempt ${attempt}/${attempts} failed in ${Date.now() - startedAt}ms: ${describeFetchError(error)}`)
       if (!canRetry) break
       await sleep(250 * attempt)
-    } finally {
-      clearTimeout(timeout)
     }
   }
   throw lastError
@@ -196,6 +243,12 @@ const fetchBlessingUser = async (accessToken) => {
   return fetchBlessingJson('/api/user', {
     headers: { Authorization: `Bearer ${accessToken}` }
   })
+}
+
+const fetchBlessingPlayers = async (accessToken) => {
+  return fetchBlessingJson('/api/players', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  }, { retries: 0 })
 }
 
 const firstText = (...values) => {
@@ -559,7 +612,7 @@ const handleApi = async (req, res, pathname) => {
     authorizeUrl.searchParams.set('client_id', blessingClientId)
     authorizeUrl.searchParams.set('redirect_uri', blessingRedirectUri)
     authorizeUrl.searchParams.set('response_type', 'code')
-    authorizeUrl.searchParams.set('scope', '')
+    authorizeUrl.searchParams.set('scope', blessingOAuthScope)
     authorizeUrl.searchParams.set('state', state)
     sendRedirect(res, authorizeUrl.toString())
     return
@@ -590,6 +643,15 @@ const handleApi = async (req, res, pathname) => {
       const accessToken = token.access_token
       if (!accessToken) throw new Error('Blessing Skin 未返回 access_token')
       const profile = await fetchBlessingUser(accessToken)
+      if (blessingFetchPlayers && !Array.isArray(profile.players)) {
+        try {
+          const players = await fetchBlessingPlayers(accessToken)
+          if (Array.isArray(players)) profile.players = players
+          else if (Array.isArray(players?.data)) profile.players = players.data
+        } catch (error) {
+          console.warn(`[blessing] /api/players skipped: ${describeFetchError(error)}`)
+        }
+      }
       const user = mapBlessingUser(profile, stateEntry.role)
       const ticket = createToken('auth-ticket')
       authTickets.set(ticket, { user, expiresAt: Date.now() + authTicketTtlMs })
