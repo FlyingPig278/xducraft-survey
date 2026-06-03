@@ -52,7 +52,7 @@ const createSeedState = () => {
       field('field-category', 'category', '大致分类', 'select', true, '', ['科技', '魔法', '冒险探索', '养老建筑', '专家包', '轻量休闲', '大型综合']),
       field('field-pack-url', 'packUrl', '整合包链接', 'url', true, 'CurseForge / Modrinth / 官网链接'),
       field('field-video-url', 'videoUrl', '宣传视频', 'url', false, 'Bilibili / YouTube 链接'),
-      field('field-notes', 'notes', '推荐理由', 'textarea', false, '简单说说它为什么适合服务器')
+      field('field-notes', 'notes', '介绍 / 推荐理由', 'textarea', false, '简要介绍玩法、亮点或推荐理由')
     ],
     createdAt: ts,
     updatedAt: ts
@@ -181,6 +181,7 @@ const createSeedState = () => {
         action: 'system.seed',
         actor: 'System',
         detail: '创建演示问卷、候选项和投票记录',
+        surveyId: survey.id,
         createdAt: ts
       }
     ]

@@ -62,7 +62,7 @@ const seedSurvey: SurveyDefinition = {
     ]),
     field('field-pack-url', 'packUrl', '整合包链接', 'url', true, 'CurseForge / Modrinth / 官网链接'),
     field('field-video-url', 'videoUrl', '宣传视频', 'url', false, 'Bilibili / YouTube 链接'),
-    field('field-notes', 'notes', '推荐理由', 'textarea', false, '简单说说它为什么适合服务器')
+    field('field-notes', 'notes', '介绍 / 推荐理由', 'textarea', false, '简要介绍玩法、亮点或推荐理由')
   ],
   createdAt: now(),
   updatedAt: now()
@@ -191,6 +191,7 @@ const seedLogs: AuditLog[] = [
     action: 'system.seed',
     actor: 'System',
     detail: '创建演示问卷、候选项和投票记录',
+    surveyId: seedSurvey.id,
     createdAt: now()
   }
 ]

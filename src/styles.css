@@ -111,16 +111,56 @@ textarea {
 }
 
 .candidate-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 15px;
   font-weight: 600;
   color: #1e293b;
   line-height: 1.4;
 }
 
+.candidate-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.info-dot {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid #c7d2fe;
+  border-radius: 50%;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.candidate-intro {
+  max-width: 320px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .candidate-card-meta {
   font-size: 13px;
   color: #64748b;
   margin-top: 2px;
+}
+
+.candidate-card-actions {
+  margin-top: 4px;
 }
 
 .candidate-card-stats {
@@ -189,7 +229,7 @@ textarea {
 
 .result-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 80px;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 12px;
   align-items: center;
   padding: 12px 16px;
@@ -203,6 +243,10 @@ textarea {
 }
 
 .result-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   font-size: 14px;
   color: #1e293b;

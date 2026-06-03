@@ -83,6 +83,7 @@ export interface AuditLog {
   action: string
   actor: string
   detail: string
+  surveyId?: string
   createdAt: string
 }
 
