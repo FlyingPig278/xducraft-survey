@@ -1,22 +1,176 @@
 import { createServer } from 'node:http'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomBytes } from 'node:crypto'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
+
+const loadedEnvKeys = new Set()
+const loadEnvFile = (filePath) => {
+  if (!existsSync(filePath)) return
+  const lines = readFileSync(filePath, 'utf8').split(/\r?\n/)
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const normalized = line.startsWith('export ') ? line.slice(7).trim() : line
+    const eqIndex = normalized.indexOf('=')
+    if (eqIndex <= 0) continue
+    const key = normalized.slice(0, eqIndex).trim()
+    let value = normalized.slice(eqIndex + 1).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    if (process.env[key] === undefined || loadedEnvKeys.has(key)) {
+      process.env[key] = value
+      loadedEnvKeys.add(key)
+    }
+  }
+}
+
+loadEnvFile(path.join(rootDir, '.env'))
+loadEnvFile(path.join(rootDir, '.env.local'))
+
 const distDir = path.join(rootDir, 'dist')
 const dataDir = process.env.XDUCRAFT_DATA_DIR
   ? path.resolve(process.env.XDUCRAFT_DATA_DIR)
   : path.join(rootDir, 'data')
 const stateFile = path.join(dataDir, 'app-state.json')
 const port = Number(process.env.PORT || 8787)
+const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '')
+const blessingBaseUrl = (process.env.BLESSING_BASE_URL || '').replace(/\/+$/, '')
+const blessingClientId = process.env.BLESSING_CLIENT_ID || ''
+const blessingClientSecret = process.env.BLESSING_CLIENT_SECRET || ''
+const blessingRedirectUri = process.env.BLESSING_REDIRECT_URI || `http://localhost:${port}/api/auth/blessing/callback`
+const blessingAdminIds = new Set((process.env.BLESSING_ADMIN_IDS || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean))
+const oauthStates = new Map()
+const authTickets = new Map()
+const oauthStateTtlMs = 10 * 60 * 1000
+const authTicketTtlMs = 2 * 60 * 1000
 
 const now = () => new Date().toISOString()
 
 const createId = (prefix) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+const createToken = (prefix) => `${prefix}-${randomBytes(18).toString('base64url')}`
+
+const blessingAuthEnabled = () =>
+  Boolean(blessingBaseUrl && blessingClientId && blessingClientSecret && blessingRedirectUri)
+
+const cleanupAuthMaps = () => {
+  const ts = Date.now()
+  for (const [key, value] of oauthStates.entries()) {
+    if (value.expiresAt <= ts) oauthStates.delete(key)
+  }
+  for (const [key, value] of authTickets.entries()) {
+    if (value.expiresAt <= ts) authTickets.delete(key)
+  }
+}
+
+const safeReturnTo = (value) => {
+  if (!value || typeof value !== 'string') return '/'
+  if (!value.startsWith('/') || value.startsWith('//')) return '/'
+  return value
+}
+
+const sendRedirect = (res, location) => {
+  res.writeHead(302, { Location: location })
+  res.end()
+}
+
+const redirectToFrontend = (res, returnTo, params) => {
+  const target = new URL(safeReturnTo(returnTo), `${frontendBaseUrl}/`)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') target.searchParams.set(key, String(value))
+  })
+  sendRedirect(res, target.toString())
+}
+
+const blessingUrl = (pathname) => new URL(pathname, `${blessingBaseUrl}/`).toString()
+
+const parseJsonResponse = async (response) => {
+  const text = await response.text()
+  let body = {}
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = { raw: text }
+    }
+  }
+  if (!response.ok) {
+    const detail = typeof body === 'object' && body && 'error' in body ? body.error : response.statusText
+    throw new Error(`Blessing Skin 请求失败：${detail}`)
+  }
+  return body
+}
+
+const exchangeBlessingCode = async (code) => {
+  const form = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: blessingClientId,
+    client_secret: blessingClientSecret,
+    redirect_uri: blessingRedirectUri,
+    code
+  })
+  const response = await fetch(blessingUrl('/oauth/token'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString()
+  })
+  return parseJsonResponse(response)
+}
+
+const fetchBlessingUser = async (accessToken) => {
+  const response = await fetch(blessingUrl('/api/user'), {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+  return parseJsonResponse(response)
+}
+
+const firstText = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number') return String(value)
+  }
+  return ''
+}
+
+const normalizeUserKey = (value) =>
+  String(value || '').trim().toLowerCase()
+
+const mapBlessingUser = (profile, requestedRole = 'player') => {
+  profile = typeof profile === 'object' && profile ? profile : {}
+  const blessingUserId = firstText(profile.uid, profile.id, profile.user_id, profile.email, profile.nickname, profile.username, createId('blessing-user'))
+  const email = firstText(profile.email)
+  const displayName = firstText(profile.nickname, profile.username, profile.name, email.split('@')[0], `用户 ${blessingUserId}`)
+  const gameId = firstText(profile.player_name, profile.gameId, profile.game_id, profile.username, profile.nickname, displayName)
+  const adminKeys = [
+    blessingUserId,
+    profile.uid,
+    profile.id,
+    profile.user_id,
+    profile.email,
+    profile.nickname,
+    profile.username,
+    displayName,
+    gameId
+  ].map(normalizeUserKey)
+  const canUseAdmin = requestedRole === 'admin' && adminKeys.some((key) => blessingAdminIds.has(key))
+  const normalizedId = blessingUserId.toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9_:-]/g, '-') || createId('user')
+  return {
+    id: `blessing-${normalizedId}`,
+    displayName,
+    gameId,
+    role: canUseAdmin ? 'admin' : 'player',
+    authProvider: 'blessing',
+    blessingUserId
+  }
+}
 
 const field = (id, key, label, type, required = true, placeholder = '', options) => ({
   id,
@@ -311,6 +465,88 @@ const handleApi = async (req, res, pathname) => {
     return
   }
 
+  if (pathname === '/api/auth/blessing/status' && req.method === 'GET') {
+    sendJson(res, 200, {
+      enabled: blessingAuthEnabled(),
+      callbackUrl: blessingRedirectUri
+    })
+    return
+  }
+
+  if (pathname === '/api/auth/blessing/login' && req.method === 'GET') {
+    if (!blessingAuthEnabled()) {
+      sendJson(res, 503, { error: 'Blessing Skin OAuth 未配置' })
+      return
+    }
+    cleanupAuthMaps()
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const state = createToken('oauth-state')
+    oauthStates.set(state, {
+      returnTo: safeReturnTo(url.searchParams.get('returnTo') || '/'),
+      role: url.searchParams.get('role') === 'admin' ? 'admin' : 'player',
+      expiresAt: Date.now() + oauthStateTtlMs
+    })
+    const authorizeUrl = new URL(blessingUrl('/oauth/authorize'))
+    authorizeUrl.searchParams.set('client_id', blessingClientId)
+    authorizeUrl.searchParams.set('redirect_uri', blessingRedirectUri)
+    authorizeUrl.searchParams.set('response_type', 'code')
+    authorizeUrl.searchParams.set('scope', '')
+    authorizeUrl.searchParams.set('state', state)
+    sendRedirect(res, authorizeUrl.toString())
+    return
+  }
+
+  if (pathname === '/api/auth/blessing/callback' && req.method === 'GET') {
+    cleanupAuthMaps()
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const state = url.searchParams.get('state') || ''
+    const stateEntry = oauthStates.get(state)
+    if (!stateEntry) {
+      redirectToFrontend(res, '/', { auth_error: '登录状态已过期，请重新登录。' })
+      return
+    }
+    oauthStates.delete(state)
+    const error = url.searchParams.get('error')
+    if (error) {
+      redirectToFrontend(res, stateEntry.returnTo, { auth_error: `授权失败：${error}` })
+      return
+    }
+    const code = url.searchParams.get('code')
+    if (!code) {
+      redirectToFrontend(res, stateEntry.returnTo, { auth_error: '授权回调缺少 code。' })
+      return
+    }
+    try {
+      const token = await exchangeBlessingCode(code)
+      const accessToken = token.access_token
+      if (!accessToken) throw new Error('Blessing Skin 未返回 access_token')
+      const profile = await fetchBlessingUser(accessToken)
+      const user = mapBlessingUser(profile, stateEntry.role)
+      const ticket = createToken('auth-ticket')
+      authTickets.set(ticket, { user, expiresAt: Date.now() + authTicketTtlMs })
+      redirectToFrontend(res, stateEntry.returnTo, { auth_ticket: ticket })
+    } catch (error) {
+      redirectToFrontend(res, stateEntry.returnTo, {
+        auth_error: error instanceof Error ? error.message : 'Blessing Skin 登录失败'
+      })
+    }
+    return
+  }
+
+  if (pathname === '/api/auth/blessing/session' && req.method === 'GET') {
+    cleanupAuthMaps()
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const ticket = url.searchParams.get('ticket') || ''
+    const entry = authTickets.get(ticket)
+    if (!entry) {
+      sendJson(res, 404, { error: '登录票据无效或已过期' })
+      return
+    }
+    authTickets.delete(ticket)
+    sendJson(res, 200, entry.user)
+    return
+  }
+
   if (pathname === '/api/state' && req.method === 'GET') {
     sendJson(res, 200, await loadState())
     return
@@ -335,7 +571,8 @@ const handleApi = async (req, res, pathname) => {
       id: body.role === 'admin' ? 'mock-admin' : `mock-${normalizedId}`,
       displayName: body.role === 'admin' ? `${displayName} 管理员` : displayName,
       gameId,
-      role: body.role === 'admin' ? 'admin' : 'player'
+      role: body.role === 'admin' ? 'admin' : 'player',
+      authProvider: 'mock'
     })
     return
   }

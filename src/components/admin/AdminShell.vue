@@ -18,7 +18,7 @@ import CandidatesPanel from './CandidatesPanel.vue'
 import ArchivePanel from './ArchivePanel.vue'
 
 const { apiLoading, apiError, adminSurveyId } = useAppState()
-const { currentUser, loginDraft, isAdmin, loginAs, logout } = useAuth()
+const { currentUser, loginDraft, isAdmin, loginAs, startOAuthLogin, logout } = useAuth()
 const { adminPanel, navigateAdmin } = useRouter()
 const { pendingCandidateCount } = useAdminCandidates()
 
@@ -99,7 +99,8 @@ const openPublicSurvey = () => {
       <!-- Admin login -->
       <div v-if="!isAdmin" class="admin-content" style="max-width: 440px">
         <n-card title="管理员登录">
-          <p style="color: #64748b; margin: 0 0 20px">当前为 mock OAuth 身份。正式版本会替换为 Blessing Skin OAuth2。</p>
+          <p style="color: #64748b; margin: 0 0 20px">可使用 Blessing Skin OAuth2 登录后台。未配置时仍可用 mock 身份本地调试。</p>
+          <n-button type="primary" block @click="startOAuthLogin('admin')" style="margin-bottom: 18px">使用 Blessing Skin 登录</n-button>
           <n-form label-placement="top" :show-feedback="false">
             <n-form-item label="显示名">
               <n-input v-model:value="loginDraft.displayName" />
@@ -107,7 +108,7 @@ const openPublicSurvey = () => {
             <n-form-item label="游戏 ID">
               <n-input v-model:value="loginDraft.gameId" />
             </n-form-item>
-            <n-button type="primary" block @click="loginAs('admin')" style="margin-top: 8px">进入后台</n-button>
+            <n-button block @click="loginAs('admin')" style="margin-top: 8px">使用 mock 身份进入后台</n-button>
           </n-form>
         </n-card>
       </div>

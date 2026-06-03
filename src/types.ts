@@ -76,6 +76,8 @@ export interface MockUser {
   displayName: string
   gameId: string
   role: UserRole
+  authProvider?: 'mock' | 'blessing'
+  blessingUserId?: string
 }
 
 export interface AuditLog {

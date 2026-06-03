@@ -13,7 +13,7 @@ import AdminShell from './components/admin/AdminShell.vue'
 
 const { survey, loadAppState, startRemoteSync, stopRemoteSync } = useAppState()
 const { isAdminRoute } = useRouter()
-const { currentUser } = useAuth()
+const { currentUser, consumeAuthRedirect } = useAuth()
 const {
   syncSelectionFromVote,
   pruneSelectionToApproved,
@@ -31,6 +31,7 @@ const { syncFieldDrafts } = useAdminFields()
 const { initAdminCandidateValues } = useAdminCandidates()
 
 onMounted(() => {
+  void consumeAuthRedirect()
   void loadAppState()
   startRemoteSync()
 })

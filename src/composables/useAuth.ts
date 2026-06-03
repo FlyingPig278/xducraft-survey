@@ -38,7 +38,48 @@ export function useAuth() {
     }
   }
 
-  const startOAuthLogin = (role: UserRole = 'player') => { void loginAs(role) }
+  const removeAuthQueryParams = () => {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('auth_ticket')
+    url.searchParams.delete('auth_error')
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }
+
+  const consumeAuthRedirect = async () => {
+    const url = new URL(window.location.href)
+    const ticket = url.searchParams.get('auth_ticket')
+    const error = url.searchParams.get('auth_error')
+    if (!ticket && !error) return
+    removeAuthQueryParams()
+    if (error) {
+      message.error(error)
+      return
+    }
+    try {
+      currentUser.value = await surveyApi.consumeBlessingTicket(ticket!)
+      saveUser(currentUser.value)
+      message.success('已通过 Blessing Skin 登录')
+    } catch {
+      message.error('登录状态读取失败，请重新登录。')
+    }
+  }
+
+  const startOAuthLogin = async (role: UserRole = 'player') => {
+    try {
+      const status = await surveyApi.blessingAuthStatus()
+      if (!status.enabled) {
+        message.warning('Blessing Skin OAuth 未配置，暂时使用 mock 登录。')
+        await loginAs(role)
+        return
+      }
+      const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      window.location.href = surveyApi.blessingLoginUrl(returnTo, role)
+    } catch {
+      message.warning('无法读取 OAuth 配置，暂时使用 mock 登录。')
+      await loginAs(role)
+    }
+  }
+
   const logout = () => { currentUser.value = null; saveUser(null); message.info('已退出登录') }
 
   const requestGuestName = (): Promise<boolean> => {
@@ -71,6 +112,7 @@ export function useAuth() {
     currentGameId,
     loginAs,
     startOAuthLogin,
+    consumeAuthRedirect,
     logout,
     requestGuestName,
     confirmGuestName,
