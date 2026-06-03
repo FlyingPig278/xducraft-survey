@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NResult, NSpace, NTag } from 'naive-ui'
-import { LogIn, LogOut, PlusCircle, Send } from '../../icons'
+import { LogIn, LogOut, Send } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAuth } from '../../composables/useAuth'
 import { useRouter } from '../../composables/useRouter'
@@ -157,8 +157,8 @@ const isDraft = computed(() => survey.value.status === 'draft')
               class="candidate-card custom-card"
               @click="openCandidateModal"
             >
-              <div class="candidate-card-check" style="border-color: #c7d2fe; display: grid; place-items: center">
-                <PlusCircle :size="18" :stroke-width="2" style="color: #6366f1" />
+              <div class="candidate-card-check candidate-card-plus">
+                +
               </div>
               <div class="candidate-card-body">
                 <div class="candidate-card-title">自定义候选项</div>

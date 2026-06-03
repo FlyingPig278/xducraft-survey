@@ -82,8 +82,8 @@ const openPublicSurvey = () => {
             :preview="true"
           />
           <div class="candidate-card custom-card" style="cursor: default">
-            <div class="candidate-card-check" style="border-color: #c7d2fe; display: grid; place-items: center">
-              <span style="color: #6366f1; font-size: 18px; font-weight: 700">+</span>
+            <div class="candidate-card-check candidate-card-plus">
+              +
             </div>
             <div class="candidate-card-body">
               <div class="candidate-card-title">自定义候选项</div>

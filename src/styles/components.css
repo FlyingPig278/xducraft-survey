@@ -158,6 +158,15 @@
   border-color: #c7d2fe;
 }
 
+.candidate-card-plus {
+  display: grid;
+  place-items: center;
+  color: #6366f1;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
