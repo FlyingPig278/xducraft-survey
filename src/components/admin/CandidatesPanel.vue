@@ -20,6 +20,7 @@ const {
 const { candidateReviewFields } = useCandidateFields(surveyById)
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
+const hasSurveys = computed(() => surveys.value.length > 0)
 </script>
 
 <template>
@@ -38,9 +39,12 @@ const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.
 
   <n-card title="添加当前问卷候选项" size="small" style="margin-bottom: 16px">
     <template #header-extra>
-      <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
+      <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" :disabled="!hasSurveys" style="width: 240px" />
     </template>
-    <n-alert v-if="survey.candidateFields.length === 0" type="warning" :bordered="false">
+    <n-alert v-if="!hasSurveys" type="info" :bordered="false">
+      还没有问卷。请先在问卷列表中新建问卷。
+    </n-alert>
+    <n-alert v-else-if="survey.candidateFields.length === 0" type="warning" :bordered="false">
       当前问卷还没有候选项投稿字段，请先到字段配置中添加字段。
     </n-alert>
     <template v-else>

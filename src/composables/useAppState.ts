@@ -8,6 +8,27 @@ import { route, navigateAdmin } from './useRouter'
 const { message } = createDiscreteApi(['message'])
 
 const appState = ref<AppState>(createSeedState())
+const emptySurvey: SurveyDefinition = {
+  id: '',
+  title: '',
+  description: '',
+  guideText: '',
+  status: 'draft',
+  startsAt: null,
+  endsAt: null,
+  resultVisibility: 'always',
+  allowVoteEdits: false,
+  requireLogin: true,
+  voteMode: 'multiple',
+  maxVotes: 3,
+  candidateSubmission: {
+    enabled: true,
+    requiresReview: true
+  },
+  candidateFields: [],
+  createdAt: '',
+  updatedAt: ''
+}
 const apiLoading = ref(true)
 const apiError = ref('')
 const stateRevision = ref(0)
@@ -26,7 +47,7 @@ const activeSurveyId = computed(() =>
 )
 const survey = computed<SurveyDefinition>(() => {
   const found = appState.value.surveys.find((item) => item.id === activeSurveyId.value)
-  return found ?? appState.value.surveys[0]!
+  return found ?? appState.value.surveys[0] ?? emptySurvey
 })
 
 // Keep adminSurveyId valid and in sync with the route.

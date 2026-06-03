@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import type { AuthUser, UserRole } from '../types'
-import { getDeviceId, loadUser, saveUser } from '../storage'
+import { clearSessionStorage, getDeviceId, loadUser, saveUser } from '../storage'
 import { surveyApi } from '../api'
 import { useAppState } from './useAppState'
 
@@ -68,7 +68,11 @@ export function useAuth() {
 
   const logout = () => {
     currentUser.value = null
-    saveUser(null)
+    guestDraft.gameId = ''
+    guestNameModalOpen.value = false
+    guestNameResolve?.(false)
+    guestNameResolve = null
+    clearSessionStorage()
     void loadAppState({ silent: true })
     message.info('已退出登录')
   }

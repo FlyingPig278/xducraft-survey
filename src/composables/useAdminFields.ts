@@ -80,6 +80,7 @@ export function useAdminFields() {
 
   const saveFieldDrafts = async (successText = '字段配置已保存') => {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
+    if (!survey.value.id) { message.warning('请先创建问卷。'); return false }
     const surveyId = survey.value.id
     const normalized = fieldDrafts.value.map((field, index) => ({
       ...field,

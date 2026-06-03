@@ -10,6 +10,7 @@ const { adminSurveyId, surveys } = useAppState()
 const { latestVote, currentSurveyAuditLogs, totalVoters, totalSelections, approvedCandidates, surveyVotes, exportResultsCsv, exportVotesCsv, exportJson } = useExport()
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
+const hasSurveys = computed(() => surveys.value.length > 0)
 </script>
 
 <template>
@@ -19,23 +20,27 @@ const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.
       <p>导出当前问卷的候选项、投票记录和完整 JSON。</p>
     </div>
     <div class="admin-section-header-actions">
-      <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
-      <n-button size="small" @click="exportResultsCsv">
+      <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" :disabled="!hasSurveys" style="width: 240px" />
+      <n-button size="small" :disabled="!hasSurveys" @click="exportResultsCsv">
         <template #icon><FileDown :size="14" /></template>
         候选 CSV
       </n-button>
-      <n-button size="small" @click="exportVotesCsv">
+      <n-button size="small" :disabled="!hasSurveys" @click="exportVotesCsv">
         <template #icon><FileDown :size="14" /></template>
         投票 CSV
       </n-button>
-      <n-button size="small" @click="exportJson">
+      <n-button size="small" :disabled="!hasSurveys" @click="exportJson">
         <template #icon><FileDown :size="14" /></template>
         JSON
       </n-button>
     </div>
   </div>
 
-  <div class="stats-grid">
+  <n-alert v-if="!hasSurveys" type="info" :bordered="false">
+    还没有问卷。请先在问卷列表中新建问卷。
+  </n-alert>
+
+  <div v-else class="stats-grid">
     <n-card size="small">
       <n-statistic label="参与人数" :value="totalVoters" />
     </n-card>
@@ -47,7 +52,7 @@ const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.
     </n-card>
   </div>
 
-  <div class="archive-grid">
+  <div v-if="hasSurveys" class="archive-grid">
     <n-card title="投票记录" size="small">
       <n-empty v-if="surveyVotes.length === 0" description="暂无投票记录" />
       <n-space v-else vertical :size="6">

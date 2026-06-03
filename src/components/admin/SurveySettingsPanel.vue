@@ -18,6 +18,7 @@ const {
 } = useAdminSurvey()
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
+const hasSurveys = computed(() => surveys.value.length > 0)
 const voteModeOptions = [{ label: '单选', value: 'single' }, { label: '多选', value: 'multiple' }]
 const statusOptions = [{ label: '草稿', value: 'draft' }, { label: '开放', value: 'open' }, { label: '已关闭', value: 'closed' }]
 const resultVisibilityOptions = [
@@ -175,7 +176,11 @@ const downloadPoster = async () => {
     </div>
   </div>
 
-  <n-card size="small">
+  <n-alert v-if="!hasSurveys" type="info" :bordered="false">
+    还没有问卷。请先在问卷列表中新建问卷。
+  </n-alert>
+
+  <n-card v-else size="small">
     <n-form label-placement="top" :show-feedback="false">
       <n-form-item label="选择问卷">
         <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" />

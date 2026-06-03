@@ -54,6 +54,7 @@ export function useAdminCandidates() {
 
   const createAdminCandidate = async () => {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+    if (!survey.value.id) { message.warning('请先创建问卷。'); return }
     const surveyId = survey.value.id
     for (const field of survey.value.candidateFields) {
       const val = adminCandidateValues.value[field.key]?.trim() ?? ''

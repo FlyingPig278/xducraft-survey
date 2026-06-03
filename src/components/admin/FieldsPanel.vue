@@ -17,6 +17,7 @@ const {
 } = useAdminFields()
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
+const hasSurveys = computed(() => surveys.value.length > 0)
 const fieldTypeOptions = [
   { label: 'text', value: 'text' },
   { label: 'textarea', value: 'textarea' },
@@ -42,23 +43,27 @@ const openPreview = async () => {
       <n-tag :type="fieldsDirty ? 'warning' : 'success'" :bordered="false">
         {{ fieldsDirty ? '有未保存字段' : '字段已保存' }}
       </n-tag>
-      <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
-      <n-button type="primary" :disabled="!fieldsDirty" @click="saveFieldDrafts()">
+      <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" :disabled="!hasSurveys" style="width: 240px" />
+      <n-button type="primary" :disabled="!hasSurveys || !fieldsDirty" @click="saveFieldDrafts()">
         <template #icon><Save :size="14" /></template>
         保存字段
       </n-button>
-      <n-button @click="openPreview">
+      <n-button :disabled="!hasSurveys" @click="openPreview">
         <template #icon><Eye :size="14" /></template>
         打开问卷
       </n-button>
     </div>
   </div>
 
-  <n-alert v-if="surveyHasCandidates" type="warning" :bordered="false" style="margin-bottom: 16px">
+  <n-alert v-if="!hasSurveys" type="info" :bordered="false" style="margin-bottom: 16px">
+    还没有问卷。请先在问卷列表中新建问卷。
+  </n-alert>
+
+  <n-alert v-else-if="surveyHasCandidates" type="warning" :bordered="false" style="margin-bottom: 16px">
     当前问卷已有候选项。修改字段 Key 后，旧候选项中对应字段可能不再显示。
   </n-alert>
 
-  <n-space vertical :size="12">
+  <n-space v-if="hasSurveys" vertical :size="12">
     <div
       v-for="(field, index) in fieldDrafts"
       :key="field.id"

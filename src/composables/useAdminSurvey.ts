@@ -114,6 +114,7 @@ export function useAdminSurvey() {
 
   const saveSurveySettings = async (successText = '问卷设置已保存') => {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
+    if (!survey.value.id) { message.warning('请先创建问卷。'); return false }
     const title = surveySettingsDraft.title.trim()
     if (!title) { message.warning('请填写问卷标题。'); return false }
     if (!validateTimeWindow(surveySettingsDraft.startsAt, surveySettingsDraft.endsAt)) {
@@ -149,6 +150,7 @@ export function useAdminSurvey() {
   }
 
   const publishSurvey = async () => {
+    if (!survey.value.id) { message.warning('请先创建问卷。'); return }
     surveySettingsDraft.status = 'open'
     await saveSurveySettings('问卷已发布，公开链接现在可访问。')
   }
@@ -177,7 +179,9 @@ export function useAdminSurvey() {
       message.warning('结束时间需要晚于开始时间。')
       return
     }
-    const fields = surveyDraft.cloneCurrentFields ? survey.value.candidateFields.map(duplicateField) : createDefaultCandidateFields()
+    const fields = surveyDraft.cloneCurrentFields && survey.value.candidateFields.length > 0
+      ? survey.value.candidateFields.map(duplicateField)
+      : createDefaultCandidateFields()
     let createdSurveyId = ''
     try {
       const result = await surveyApi.createSurvey({
