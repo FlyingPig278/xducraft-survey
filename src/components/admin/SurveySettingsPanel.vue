@@ -68,9 +68,9 @@ const copyPublicLink = async () => {
   }
 }
 
-const openPreview = async () => {
+const openPublicPreview = async () => {
   if (surveySettingsDirty.value) await saveSurveySettings('问卷设置已保存')
-  navigateAdmin('preview', adminSurveyId.value)
+  window.open(publicSurveyUrl.value, '_blank', 'noopener,noreferrer')
 }
 
 const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
@@ -223,9 +223,9 @@ const downloadPoster = async () => {
             <template #icon><Settings2 :size="14" /></template>
             配置字段
           </n-button>
-          <n-button @click="openPreview">
+          <n-button @click="openPublicPreview">
             <template #icon><Eye :size="14" /></template>
-            发布预览
+            打开问卷
           </n-button>
           <n-button type="primary" :disabled="!surveySettingsDirty" @click="saveSurveySettings()">
             <template #icon><Save :size="14" /></template>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NAlert, NButton, NCard, NSelect, NSpace, NTag } from 'naive-ui'
+import { NButton, NCard, NSelect, NSpace, NTag } from 'naive-ui'
 import { Eye, Plus, RotateCcw, Settings2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
@@ -11,7 +11,7 @@ import type { SurveyStatus } from '../../types'
 type SurveyFilter = 'all' | SurveyStatus
 
 const { appState, adminSurveyId, surveys, resetDemo } = useAppState()
-const { surveyCreateModalOpen } = useAdminSurvey()
+const { surveyCreateModalOpen, updateSurveyStatus } = useAdminSurvey()
 const statusFilter = ref<SurveyFilter>('all')
 
 const filterOptions = [
@@ -19,6 +19,11 @@ const filterOptions = [
   { label: '已发布', value: 'open' },
   { label: '草稿/未发布', value: 'draft' },
   { label: '已关闭', value: 'closed' }
+]
+const statusOptions = [
+  { label: '草稿', value: 'draft' },
+  { label: '开放', value: 'open' },
+  { label: '关闭', value: 'closed' }
 ]
 
 const surveyRows = computed(() => surveys.value
@@ -42,6 +47,10 @@ const openSettings = (surveyId: string) => {
   adminSurveyId.value = surveyId
   navigateAdmin('settings', surveyId)
 }
+
+const changeSurveyStatus = (surveyId: string, value: SurveyStatus) => {
+  void updateSurveyStatus(surveyId, value)
+}
 </script>
 
 <template>
@@ -64,10 +73,6 @@ const openSettings = (surveyId: string) => {
   </div>
 
   <n-card size="small">
-    <n-alert type="info" :bordered="false" style="margin-bottom: 14px">
-      草稿表示问卷仍在编辑中。玩家即使拿到链接，也只能看到未开放提示，不能提交投票或候选项。
-    </n-alert>
-
     <div class="survey-list">
       <div
         v-for="row in surveyRows"
@@ -87,15 +92,22 @@ const openSettings = (surveyId: string) => {
           </span>
         </span>
         <span class="survey-list-actions">
+          <n-select
+            :value="row.item.status"
+            :options="statusOptions"
+            size="tiny"
+            style="width: 92px"
+            @click.stop
+            @update:value="(value) => changeSurveyStatus(row.item.id, value)"
+          />
           <n-button size="tiny" secondary @click.stop="openSettings(row.item.id)">
             <template #icon><Settings2 :size="13" /></template>
             设置
           </n-button>
-          <n-button size="tiny" secondary @click.stop="navigateAdmin('preview', row.item.id)">
+          <n-button size="tiny" secondary @click.stop="openPublicSurvey(row.item.id)">
             <template #icon><Eye :size="13" /></template>
             预览
           </n-button>
-          <n-button size="tiny" secondary @click.stop="openPublicSurvey(row.item.id)">打开</n-button>
         </span>
       </div>
     </div>

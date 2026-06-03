@@ -1,12 +1,12 @@
 import { computed, ref } from 'vue'
 
-export type AdminPanelKey = 'surveys' | 'settings' | 'preview' | 'fields' | 'candidates' | 'archive'
+export type AdminPanelKey = 'surveys' | 'settings' | 'fields' | 'candidates' | 'archive'
 export type RouteState =
   | { mode: 'survey'; surveyId: string }
   | { mode: 'admin'; panel: AdminPanelKey; surveyId?: string }
   | { mode: 'not-found' }
 
-const adminPanelKeys: AdminPanelKey[] = ['surveys', 'settings', 'preview', 'fields', 'candidates', 'archive']
+const adminPanelKeys: AdminPanelKey[] = ['surveys', 'settings', 'fields', 'candidates', 'archive']
 
 const hash = ref(window.location.hash)
 window.addEventListener('hashchange', () => { hash.value = window.location.hash })

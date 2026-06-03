@@ -12,7 +12,6 @@ import { publicSurveyUrlFor } from '../../composables/useRouter'
 import SurveyPanel from './SurveyPanel.vue'
 import SurveyCreateModal from './SurveyCreateModal.vue'
 import SurveySettingsPanel from './SurveySettingsPanel.vue'
-import PreviewPanel from './PreviewPanel.vue'
 import FieldsPanel from './FieldsPanel.vue'
 import CandidatesPanel from './CandidatesPanel.vue'
 import ArchivePanel from './ArchivePanel.vue'
@@ -118,7 +117,6 @@ const openPublicSurvey = () => {
       <div v-else class="admin-content">
         <SurveyPanel v-if="adminPanel === 'surveys'" />
         <SurveySettingsPanel v-else-if="adminPanel === 'settings'" />
-        <PreviewPanel v-else-if="adminPanel === 'preview'" />
         <FieldsPanel v-else-if="adminPanel === 'fields'" />
         <CandidatesPanel v-else-if="adminPanel === 'candidates'" />
         <ArchivePanel v-else-if="adminPanel === 'archive'" />

@@ -6,7 +6,7 @@ import { useAppState } from '../../composables/useAppState'
 import { useAdminSurvey } from '../../composables/useAdminSurvey'
 import { useAdminFields } from '../../composables/useAdminFields'
 import { fieldOptions } from '../../composables/useCandidateFields'
-import { navigateAdmin } from '../../composables/useRouter'
+import { publicSurveyUrlFor } from '../../composables/useRouter'
 
 const { adminSurveyId, surveys } = useAppState()
 const { saveSurveySettings, surveySettingsDirty } = useAdminSurvey()
@@ -28,7 +28,7 @@ const fieldTypeOptions = [
 const openPreview = async () => {
   if (surveySettingsDirty.value) await saveSurveySettings('问卷设置已保存')
   if (fieldsDirty.value) await saveFieldDrafts('字段配置已保存')
-  navigateAdmin('preview', adminSurveyId.value)
+  window.open(publicSurveyUrlFor(adminSurveyId.value), '_blank', 'noopener,noreferrer')
 }
 </script>
 
@@ -49,7 +49,7 @@ const openPreview = async () => {
       </n-button>
       <n-button @click="openPreview">
         <template #icon><Eye :size="14" /></template>
-        发布预览
+        打开问卷
       </n-button>
     </div>
   </div>

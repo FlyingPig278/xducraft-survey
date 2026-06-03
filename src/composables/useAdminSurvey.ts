@@ -126,6 +126,20 @@ export function useAdminSurvey() {
     await saveSurveySettings('问卷已发布，公开链接现在可访问。')
   }
 
+  const updateSurveyStatus = async (surveyId: string, status: SurveyStatus) => {
+    if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return false }
+    const target = appState.value.surveys.find((item) => item.id === surveyId)
+    if (!target) { message.error('问卷不存在。'); return false }
+    if (target.status === status) return true
+    target.status = status
+    target.updatedAt = new Date().toISOString()
+    addAudit('survey.status_updated', `${currentUser.value.displayName} 将问卷「${target.title}」状态改为 ${status}`, surveyId, currentUser.value.displayName)
+    if (!(await persist(surveyId))) return false
+    if (survey.value.id === surveyId) syncSurveySettingsDraft()
+    message.success('问卷状态已更新')
+    return true
+  }
+
   const createSurvey = async () => {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
     const title = surveyDraft.title.trim()
@@ -160,6 +174,7 @@ export function useAdminSurvey() {
     syncSurveySettingsDraft,
     saveSurveySettings,
     publishSurvey,
+    updateSurveyStatus,
     createSurvey
   }
 }
