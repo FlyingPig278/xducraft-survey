@@ -1,9 +1,9 @@
 import { computed, ref } from 'vue'
-import type { Candidate, CandidateStatus } from '../types'
+import type { Candidate } from '../types'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
-import { createId } from '../storage'
 import { getSurveyAvailability, isSurveyAcceptingSubmissions } from './useSurveyAvailability'
+import { surveyApi } from '../api'
 
 const selectedCandidateIds = ref<string[]>([])
 const voteConfirmOpen = ref(false)
@@ -14,8 +14,8 @@ const submissionMessage = ref('')
 const submissionValues = ref<Record<string, string>>({})
 
 export function useSurveyVote() {
-  const { appState, survey, persist, addAudit, message } = useAppState()
-  const { currentUser, effectiveUserId, currentActorName, currentGameId, guestDraft, requestGuestName, startOAuthLogin } = useAuth()
+  const { appState, survey, applyRemoteState, message } = useAppState()
+  const { currentUser, effectiveUserId, currentGameId, guestDraft, requestGuestName, startOAuthLogin } = useAuth()
 
   const surveyCandidates = computed(() => appState.value.candidates.filter((c) => c.surveyId === survey.value.id))
   const surveyVotes = computed(() => appState.value.votes.filter((v) => v.surveyId === survey.value.id))
@@ -100,17 +100,16 @@ export function useSurveyVote() {
       return
     }
     const surveyId = survey.value.id
-    const ts = new Date().toISOString()
-    if (currentVote.value) {
-      currentVote.value.history.push({ candidateIds: [...currentVote.value.candidateIds], changedAt: currentVote.value.updatedAt })
-      currentVote.value.candidateIds = [...selectedCandidateIds.value]
-      currentVote.value.updatedAt = ts
-      addAudit('vote.updated', `${currentActorName()} 修改了「${survey.value.title}」的投票`, surveyId, currentActorName())
-    } else {
-      appState.value.votes.push({ id: createId('vote'), surveyId, userId: effectiveUserId.value, userName: currentActorName(), gameId: currentGameId(), candidateIds: [...selectedCandidateIds.value], createdAt: ts, updatedAt: ts, history: [] })
-      addAudit('vote.created', `${currentActorName()} 提交了「${survey.value.title}」的投票`, surveyId, currentActorName())
+    try {
+      applyRemoteState(await surveyApi.submitVote({
+        surveyId,
+        candidateIds: [...selectedCandidateIds.value],
+        guestGameId: currentGameId()
+      }), surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '投票提交失败')
+      return
     }
-    if (!(await persist(surveyId))) return
     voteConfirmOpen.value = false
     submittedSurveyId.value = surveyId
     editingVote.value = false
@@ -143,11 +142,19 @@ export function useSurveyVote() {
     const normalize = (v: string) => v.trim().toLowerCase().replace(/\s+/g, ' ')
     const title = submissionValues.value.packName?.trim() || submissionValues.value.name?.trim() || submissionValues.value.title?.trim() || survey.value.candidateFields.map((f) => submissionValues.value[f.key]).find(Boolean)?.trim() || '未命名候选项'
     if (appState.value.candidates.find((c) => c.surveyId === survey.value.id && c.status !== 'rejected' && normalize(c.title) === normalize(title))) { submissionMessage.value = '已经存在同名候选项。'; return }
-    const ts = new Date().toISOString()
-    const status: CandidateStatus = survey.value.candidateSubmission.requiresReview ? 'pending' : 'approved'
-    appState.value.candidates.unshift({ id: createId('candidate'), surveyId: survey.value.id, title, status, fields: { ...submissionValues.value }, submitterUserId: effectiveUserId.value, submitterName: currentActorName(), createdAt: ts, reviewedAt: status === 'approved' ? ts : undefined, reviewerName: status === 'approved' ? 'Auto Review' : undefined })
-    addAudit('candidate.submitted', `${currentActorName()} 投稿了「${title}」`, survey.value.id, currentActorName())
-    if (!(await persist(survey.value.id))) return
+    let status = survey.value.candidateSubmission.requiresReview ? 'pending' : 'approved'
+    try {
+      const result = await surveyApi.submitCandidate({
+        surveyId: survey.value.id,
+        fields: { ...submissionValues.value },
+        guestGameId: currentGameId()
+      })
+      status = result.candidateStatus
+      applyRemoteState(result.state, survey.value.id)
+    } catch (error) {
+      submissionMessage.value = error instanceof Error ? error.message : '候选项提交失败'
+      return
+    }
     resetSubmissionValues()
     candidateModalOpen.value = false
     message.success(status === 'pending' ? '候选项已提交，等待管理员审核。' : '候选项已进入投票列表。')

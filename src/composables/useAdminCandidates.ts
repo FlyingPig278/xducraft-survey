@@ -4,6 +4,7 @@ import { createId } from '../storage'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { statusLabel } from './useCandidateFields'
+import { surveyApi } from '../api'
 
 type CandidateFilter = CandidateStatus | 'all'
 
@@ -15,7 +16,7 @@ const editCandidateModalOpen = ref(false)
 const editingCandidateId = ref('')
 
 export function useAdminCandidates() {
-  const { appState, survey, surveyById, persist, addAudit, message } = useAppState()
+  const { appState, survey, surveyById, applyRemoteState, message } = useAppState()
   const { isAdmin, currentUser } = useAuth()
 
   const pendingCandidateCount = computed(() => appState.value.candidates.filter((c) => c.status === 'pending').length)
@@ -63,15 +64,12 @@ export function useAdminCandidates() {
     if (appState.value.candidates.find((c) => c.surveyId === surveyId && c.status !== 'rejected' && normalize(c.title) === normalize(title))) {
       message.warning('当前问卷已经存在同名候选项。'); return
     }
-    const ts = new Date().toISOString()
-    appState.value.candidates.unshift({
-      id: createId('candidate'), surveyId, title, status: 'approved',
-      fields: { ...adminCandidateValues.value },
-      submitterUserId: currentUser.value.id, submitterName: currentUser.value.displayName,
-      createdAt: ts, reviewedAt: ts, reviewerName: currentUser.value.displayName
-    })
-    addAudit('candidate.admin_created', `${currentUser.value.displayName} 添加了「${title}」作为「${survey.value.title}」的候选项`, surveyId, currentUser.value.displayName)
-    if (!(await persist(surveyId))) return
+    try {
+      applyRemoteState(await surveyApi.createAdminCandidate({ surveyId, fields: { ...adminCandidateValues.value } }), surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '候选项创建失败')
+      return
+    }
     resetAdminCandidateValues()
     message.success(`候选项「${title}」已加入当前问卷`)
   }
@@ -105,12 +103,12 @@ export function useAdminCandidates() {
     if (appState.value.candidates.find((item) => item.id !== candidate.id && item.surveyId === candidate.surveyId && item.status !== 'rejected' && normalize(item.title) === normalize(title))) {
       message.warning('当前问卷已经存在同名候选项。'); return
     }
-    candidate.title = title
-    candidate.fields = { ...candidate.fields, ...cleanedValues }
-    candidate.reviewedAt = new Date().toISOString()
-    candidate.reviewerName = currentUser.value.displayName
-    addAudit('candidate.edited', `${currentUser.value.displayName} 修改了候选项「${title}」`, candidate.surveyId, currentUser.value.displayName)
-    if (!(await persist(candidate.surveyId))) return
+    try {
+      applyRemoteState(await surveyApi.updateAdminCandidate(candidate.id, { fields: cleanedValues }), candidate.surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '候选项保存失败')
+      return
+    }
     editCandidateModalOpen.value = false
     editingCandidateId.value = ''
     message.success(`候选项「${title}」已保存`)
@@ -119,12 +117,15 @@ export function useAdminCandidates() {
   const setCandidateStatus = async (candidate: Candidate, status: CandidateStatus) => {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
     const surveyId = candidate.surveyId
-    candidate.status = status
-    candidate.reviewedAt = new Date().toISOString()
-    candidate.reviewerName = currentUser.value.displayName
-    candidate.reviewNote = reviewNotes.value[candidate.id] ?? candidate.reviewNote ?? ''
-    addAudit(`candidate.${status}`, `${currentUser.value.displayName} 将「${candidate.title}」标记为${statusLabel(status)}`, surveyId, currentUser.value.displayName)
-    if (!(await persist(surveyId))) return
+    try {
+      applyRemoteState(await surveyApi.updateAdminCandidate(candidate.id, {
+        status,
+        reviewNote: reviewNotes.value[candidate.id] ?? candidate.reviewNote ?? ''
+      }), surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '审核状态保存失败')
+      return
+    }
     message.success(`「${candidate.title}」已标记为${statusLabel(status)}`)
   }
 

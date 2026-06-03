@@ -1,4 +1,5 @@
-import type { AppState, AuthUser, UserRole } from './types'
+import type { AppState, AuthUser, CandidateStatus, FieldDefinition, ResultVisibility, SurveyStatus, UserRole, VoteMode } from './types'
+import { getDeviceId, loadUser } from './storage'
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -7,20 +8,86 @@ interface BlessingAuthStatus {
   callbackUrl: string
 }
 
+interface AuthSession {
+  user: AuthUser
+  sessionToken: string
+}
+
+interface CreateSurveyPayload {
+  title: string
+  description: string
+  guideText: string
+  startsAt?: string | null
+  endsAt?: string | null
+  voteMode: VoteMode
+  maxVotes: number
+  resultVisibility: ResultVisibility
+  allowVoteEdits: boolean
+  requireLogin: boolean
+  candidateSubmission: {
+    enabled: boolean
+    requiresReview: boolean
+  }
+  candidateFields: FieldDefinition[]
+}
+
+interface UpdateSurveyPayload {
+  title?: string
+  description?: string
+  guideText?: string
+  status?: SurveyStatus
+  startsAt?: string | null
+  endsAt?: string | null
+  voteMode?: VoteMode
+  maxVotes?: number
+  resultVisibility?: ResultVisibility
+  allowVoteEdits?: boolean
+  requireLogin?: boolean
+  candidateSubmission?: {
+    enabled: boolean
+    requiresReview: boolean
+  }
+}
+
+interface CreateSurveyResult {
+  state: AppState
+  surveyId: string
+}
+
+interface CandidateSubmitResult {
+  state: AppState
+  candidateStatus: CandidateStatus
+}
+
 const apiUrl = (path: string) => `${apiBase}${path}`
+const authHeaders = () => {
+  const user = loadUser()
+  return {
+    ...(user?.sessionToken ? { Authorization: `Bearer ${user.sessionToken}` } : {}),
+    'X-Device-Id': getDeviceId()
+  }
+}
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...init?.headers
     }
   })
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(errorText || `API 请求失败：${response.status}`)
+    let message = errorText || `API 请求失败：${response.status}`
+    try {
+      const body = JSON.parse(errorText) as { error?: string }
+      message = body.error || message
+    } catch {
+      // Plain text error body.
+    }
+    throw new Error(message)
   }
 
   return response.json() as Promise<T>
@@ -28,16 +95,27 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 export const surveyApi = {
   getState: () => request<AppState>('/api/state'),
-  saveState: (state: AppState) =>
-    request<AppState>('/api/state', {
-      method: 'PUT',
-      body: JSON.stringify(state)
-    }),
+  submitVote: (payload: { surveyId: string; candidateIds: string[]; guestGameId?: string }) =>
+    request<AppState>('/api/votes', { method: 'POST', body: JSON.stringify(payload) }),
+  submitCandidate: (payload: { surveyId: string; fields: Record<string, string>; guestGameId?: string }) =>
+    request<CandidateSubmitResult>('/api/candidates', { method: 'POST', body: JSON.stringify(payload) }),
+  createSurvey: (payload: CreateSurveyPayload) =>
+    request<CreateSurveyResult>('/api/admin/surveys', { method: 'POST', body: JSON.stringify(payload) }),
+  updateSurvey: (surveyId: string, payload: UpdateSurveyPayload) =>
+    request<AppState>(`/api/admin/surveys/${encodeURIComponent(surveyId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteSurvey: (surveyId: string) =>
+    request<AppState>(`/api/admin/surveys/${encodeURIComponent(surveyId)}`, { method: 'DELETE' }),
+  updateSurveyFields: (surveyId: string, candidateFields: FieldDefinition[]) =>
+    request<AppState>(`/api/admin/surveys/${encodeURIComponent(surveyId)}/fields`, { method: 'PUT', body: JSON.stringify({ candidateFields }) }),
+  createAdminCandidate: (payload: { surveyId: string; fields: Record<string, string> }) =>
+    request<AppState>('/api/admin/candidates', { method: 'POST', body: JSON.stringify(payload) }),
+  updateAdminCandidate: (candidateId: string, payload: { fields?: Record<string, string>; status?: CandidateStatus; reviewNote?: string }) =>
+    request<AppState>(`/api/admin/candidates/${encodeURIComponent(candidateId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   blessingAuthStatus: () => request<BlessingAuthStatus>('/api/auth/blessing/status'),
   blessingLoginUrl: (returnTo: string, role: UserRole = 'player') => {
     const params = new URLSearchParams({ returnTo, role })
     return apiUrl(`/api/auth/blessing/login?${params.toString()}`)
   },
   consumeBlessingTicket: (ticket: string) =>
-    request<AuthUser>(`/api/auth/blessing/session?${new URLSearchParams({ ticket }).toString()}`)
+    request<AuthSession>(`/api/auth/blessing/session?${new URLSearchParams({ ticket }).toString()}`)
 }

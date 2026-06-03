@@ -45,15 +45,12 @@ const canSubmitSurvey = computed(() => surveyAvailability.value.canSubmit)
 const availabilityAlertType = computed(() => surveyAvailability.value.reason === 'draft' || surveyAvailability.value.reason === 'not_started' ? 'info' : 'warning')
 
 const surveyRuleHints = computed(() => {
-  const resultHint = survey.value.resultVisibility === 'always' ? '提交前可查看票数' : survey.value.resultVisibility === 'after_vote' ? '投票后可查看票数' : '票数不向玩家公开'
-  const editHint = survey.value.allowVoteEdits ? '提交后可修改' : '提交后不可修改'
-  const identityHint = survey.value.requireLogin ? '需要登录提交' : '免登录填写'
-  const hints = [resultHint, editHint, identityHint]
+  const hints: string[] = []
   const windowHint = formatSurveyWindow(survey.value)
   if (windowHint) hints.push(windowHint)
-  if (survey.value.candidateSubmission.enabled) {
-    hints.push(survey.value.candidateSubmission.requiresReview ? '提交后进入审核，通过后可被投票' : '提交后直接加入投票列表')
-  }
+  if (survey.value.resultVisibility === 'after_vote') hints.push('投票后查看结果')
+  if (survey.value.resultVisibility === 'hidden') hints.push('结果不公开')
+  if (survey.value.allowVoteEdits) hints.push('提交后可修改')
   return hints
 })
 
@@ -119,7 +116,7 @@ const openAdminPanel = () => { navigateAdmin('surveys') }
         </n-alert>
 
         <p style="color: #64748b; margin: 0 0 10px; line-height: 1.6">{{ surveyGuideText }}</p>
-        <div class="survey-rule-hints">
+        <div v-if="surveyRuleHints.length" class="survey-rule-hints">
           <span v-for="hint in surveyRuleHints" :key="hint">{{ hint }}</span>
         </div>
 

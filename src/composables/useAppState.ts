@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import type { AppState, SurveyDefinition } from '../types'
-import { createId, createSeedState } from '../storage'
+import { createSeedState } from '../storage'
 import { surveyApi } from '../api'
 import { createDiscreteApi } from 'naive-ui'
 import { route, navigateAdmin } from './useRouter'
@@ -116,24 +116,6 @@ export function useAppState() {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 
-  const persist = async (preferredSurveyId = activeSurveyId.value): Promise<boolean> => {
-    apiError.value = ''
-    stateRevision.value += 1
-    try {
-      applyRemoteState(await surveyApi.saveState(appState.value), preferredSurveyId)
-      return true
-    } catch (error) {
-      apiError.value = error instanceof Error ? error.message : '保存失败'
-      message.error('保存失败，请检查 API 服务。')
-      return false
-    }
-  }
-
-  const addAudit = (action: string, detail: string, surveyId: string | null = activeSurveyId.value, actor = 'System') => {
-    const log = { id: createId('log'), action, actor, detail, createdAt: new Date().toISOString(), surveyId: surveyId || undefined }
-    appState.value.auditLogs.unshift(log)
-  }
-
   return {
     appState,
     apiLoading,
@@ -148,8 +130,6 @@ export function useAppState() {
     loadAppState,
     startRemoteSync,
     stopRemoteSync,
-    persist,
-    addAudit,
     message
   }
 }

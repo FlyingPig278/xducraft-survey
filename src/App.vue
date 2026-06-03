@@ -30,9 +30,9 @@ const { syncSurveySettingsDraft } = useAdminSurvey()
 const { syncFieldDrafts } = useAdminFields()
 const { initAdminCandidateValues } = useAdminCandidates()
 
-onMounted(() => {
-  void consumeAuthRedirect()
-  void loadAppState()
+onMounted(async () => {
+  await consumeAuthRedirect()
+  await loadAppState()
   startRemoteSync()
 })
 

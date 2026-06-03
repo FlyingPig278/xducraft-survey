@@ -9,6 +9,7 @@ import type {
 } from './types'
 
 const USER_KEY = 'xducraft-survey-current-user-v1'
+const DEVICE_KEY = 'xducraft-survey-device-id-v1'
 
 const now = () => new Date().toISOString()
 
@@ -211,7 +212,7 @@ export const loadUser = (): AuthUser | null => {
 
   try {
     const user = JSON.parse(raw) as AuthUser
-    if (user.authProvider !== 'blessing') {
+    if (user.authProvider !== 'blessing' || !user.sessionToken) {
       localStorage.removeItem(USER_KEY)
       return null
     }
@@ -227,4 +228,13 @@ export const saveUser = (user: AuthUser | null) => {
     return
   }
   localStorage.setItem(USER_KEY, JSON.stringify(user))
+}
+
+export const getDeviceId = () => {
+  let value = localStorage.getItem(DEVICE_KEY)
+  if (!value) {
+    value = `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    localStorage.setItem(DEVICE_KEY, value)
+  }
+  return value
 }

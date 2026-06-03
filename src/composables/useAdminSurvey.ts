@@ -4,6 +4,7 @@ import { createId } from '../storage'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { navigateAdmin } from './useRouter'
+import { surveyApi } from '../api'
 
 export const DEFAULT_GUIDE_TEXT = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选。'
 const LEGACY_GUIDE_TEXT = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。'
@@ -80,7 +81,7 @@ const settingsSnapshot = (item: SurveyDefinition) => JSON.stringify({
 })
 
 export function useAdminSurvey() {
-  const { survey, appState, persist, addAudit, message, surveys } = useAppState()
+  const { survey, appState, applyRemoteState, message, surveys } = useAppState()
   const { isAdmin, currentUser } = useAuth()
 
   const surveyGuideText = computed(() => {
@@ -120,24 +121,28 @@ export function useAdminSurvey() {
       return false
     }
     const surveyId = survey.value.id
-    survey.value.title = title
-    survey.value.description = surveySettingsDraft.description.trim() || '请选择你愿意参与的服务器方案。'
-    survey.value.guideText = surveySettingsDraft.guideText.trim() || DEFAULT_GUIDE_TEXT
-    survey.value.status = surveySettingsDraft.status
-    survey.value.startsAt = toIsoDateTime(surveySettingsDraft.startsAt)
-    survey.value.endsAt = toIsoDateTime(surveySettingsDraft.endsAt)
-    survey.value.voteMode = surveySettingsDraft.voteMode
-    survey.value.maxVotes = Math.max(1, Number(surveySettingsDraft.maxVotes) || 1)
-    survey.value.resultVisibility = surveySettingsDraft.resultVisibility
-    survey.value.allowVoteEdits = surveySettingsDraft.allowVoteEdits
-    survey.value.requireLogin = surveySettingsDraft.requireLogin
-    survey.value.candidateSubmission = {
-      enabled: surveySettingsDraft.candidateSubmissionEnabled,
-      requiresReview: surveySettingsDraft.candidateSubmissionRequiresReview
+    try {
+      applyRemoteState(await surveyApi.updateSurvey(surveyId, {
+        title,
+        description: surveySettingsDraft.description.trim() || '请选择你愿意参与的服务器方案。',
+        guideText: surveySettingsDraft.guideText.trim() || DEFAULT_GUIDE_TEXT,
+        status: surveySettingsDraft.status,
+        startsAt: toIsoDateTime(surveySettingsDraft.startsAt),
+        endsAt: toIsoDateTime(surveySettingsDraft.endsAt),
+        voteMode: surveySettingsDraft.voteMode,
+        maxVotes: Math.max(1, Number(surveySettingsDraft.maxVotes) || 1),
+        resultVisibility: surveySettingsDraft.resultVisibility,
+        allowVoteEdits: surveySettingsDraft.allowVoteEdits,
+        requireLogin: surveySettingsDraft.requireLogin,
+        candidateSubmission: {
+          enabled: surveySettingsDraft.candidateSubmissionEnabled,
+          requiresReview: surveySettingsDraft.candidateSubmissionRequiresReview
+        }
+      }), surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败')
+      return false
     }
-    survey.value.updatedAt = new Date().toISOString()
-    addAudit('survey.settings_saved', `${currentUser.value.displayName} 保存了问卷「${survey.value.title}」的设置`, surveyId, currentUser.value.displayName)
-    if (!(await persist(surveyId))) return false
     syncSurveySettingsDraft()
     message.success(successText)
     return true
@@ -153,10 +158,12 @@ export function useAdminSurvey() {
     const target = appState.value.surveys.find((item) => item.id === surveyId)
     if (!target) { message.error('问卷不存在。'); return false }
     if (target.status === status) return true
-    target.status = status
-    target.updatedAt = new Date().toISOString()
-    addAudit('survey.status_updated', `${currentUser.value.displayName} 将问卷「${target.title}」状态改为 ${status}`, surveyId, currentUser.value.displayName)
-    if (!(await persist(surveyId))) return false
+    try {
+      applyRemoteState(await surveyApi.updateSurvey(surveyId, { status }), surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败')
+      return false
+    }
     if (survey.value.id === surveyId) syncSurveySettingsDraft()
     message.success('问卷状态已更新')
     return true
@@ -170,26 +177,37 @@ export function useAdminSurvey() {
       message.warning('结束时间需要晚于开始时间。')
       return
     }
-    const ts = new Date().toISOString()
     const fields = surveyDraft.cloneCurrentFields ? survey.value.candidateFields.map(duplicateField) : createDefaultCandidateFields()
-    const next: SurveyDefinition = {
-      id: createId('survey'), title, description: surveyDraft.description.trim() || '请选择你愿意参与的服务器方案。',
-      guideText: surveyDraft.guideText.trim() || DEFAULT_GUIDE_TEXT, status: 'draft',
-      startsAt: toIsoDateTime(surveyDraft.startsAt), endsAt: toIsoDateTime(surveyDraft.endsAt),
-      resultVisibility: surveyDraft.resultVisibility,
-      allowVoteEdits: surveyDraft.allowVoteEdits, requireLogin: surveyDraft.requireLogin, voteMode: surveyDraft.voteMode,
-      maxVotes: Math.max(1, Number(surveyDraft.maxVotes) || 1),
-      candidateSubmission: { enabled: surveyDraft.candidateSubmissionEnabled, requiresReview: surveyDraft.candidateSubmissionRequiresReview },
-      candidateFields: fields, createdAt: ts, updatedAt: ts
+    let createdSurveyId = ''
+    try {
+      const result = await surveyApi.createSurvey({
+        title,
+        description: surveyDraft.description.trim() || '请选择你愿意参与的服务器方案。',
+        guideText: surveyDraft.guideText.trim() || DEFAULT_GUIDE_TEXT,
+        startsAt: toIsoDateTime(surveyDraft.startsAt),
+        endsAt: toIsoDateTime(surveyDraft.endsAt),
+        resultVisibility: surveyDraft.resultVisibility,
+        allowVoteEdits: surveyDraft.allowVoteEdits,
+        requireLogin: surveyDraft.requireLogin,
+        voteMode: surveyDraft.voteMode,
+        maxVotes: Math.max(1, Number(surveyDraft.maxVotes) || 1),
+        candidateSubmission: {
+          enabled: surveyDraft.candidateSubmissionEnabled,
+          requiresReview: surveyDraft.candidateSubmissionRequiresReview
+        },
+        candidateFields: fields
+      })
+      createdSurveyId = result.surveyId
+      applyRemoteState(result.state, createdSurveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '创建失败')
+      return
     }
-    appState.value.surveys.unshift(next)
     surveyDraft.title = ''; surveyDraft.description = ''; surveyDraft.guideText = DEFAULT_GUIDE_TEXT
     surveyDraft.startsAt = null; surveyDraft.endsAt = null
-    addAudit('survey.created', `${currentUser.value.displayName} 创建了问卷「${next.title}」`, next.id, currentUser.value.displayName)
-    if (!(await persist(next.id))) return
     surveyCreateModalOpen.value = false
-    message.success(`问卷「${next.title}」已创建，开始配置投稿字段。`)
-    navigateAdmin('fields', next.id)
+    message.success(`问卷「${title}」已创建，开始配置投稿字段。`)
+    navigateAdmin('fields', createdSurveyId)
   }
 
   const deleteSurvey = async (surveyId: string) => {
@@ -201,12 +219,12 @@ export function useAdminSurvey() {
       return false
     }
     const nextSurveyId = appState.value.surveys.find((item) => item.id !== surveyId)?.id ?? ''
-    appState.value.surveys = appState.value.surveys.filter((item) => item.id !== surveyId)
-    appState.value.candidates = appState.value.candidates.filter((item) => item.surveyId !== surveyId)
-    appState.value.votes = appState.value.votes.filter((item) => item.surveyId !== surveyId)
-    appState.value.auditLogs = appState.value.auditLogs.filter((item) => item.surveyId !== surveyId)
-    addAudit('survey.deleted', `${currentUser.value.displayName} 删除了问卷「${target.title}」及其关联数据`, null, currentUser.value.displayName)
-    if (!(await persist(nextSurveyId))) return false
+    try {
+      applyRemoteState(await surveyApi.deleteSurvey(surveyId), nextSurveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '删除失败')
+      return false
+    }
     message.success('问卷已删除')
     navigateAdmin('surveys', nextSurveyId)
     return true

@@ -1,11 +1,11 @@
 import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { setDefaultResultOrder } from 'node:dns'
 import { connect as tlsConnect } from 'node:tls'
 
@@ -65,6 +65,8 @@ const blessingIpFamily = Number(process.env.BLESSING_IP_FAMILY || 4)
 const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS === 'true'
 const blessingProxyUrl = process.env.BLESSING_PROXY_URL || ''
 const blessingDebugProfile = process.env.BLESSING_DEBUG_PROFILE === 'true'
+const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
+const sessionTtlMs = Math.max(3600, Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14)) * 1000
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
@@ -79,6 +81,83 @@ const createToken = (prefix) => `${prefix}-${randomBytes(18).toString('base64url
 
 const blessingAuthEnabled = () =>
   Boolean(blessingBaseUrl && blessingClientId && blessingClientSecret && blessingRedirectUri)
+
+const encodeJson = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
+const decodeJson = (value) => JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+const signSessionPayload = (payload) =>
+  createHmac('sha256', sessionSecret).update(payload).digest('base64url')
+
+const safeEqual = (a, b) => {
+  const left = Buffer.from(String(a))
+  const right = Buffer.from(String(b))
+  return left.length === right.length && timingSafeEqual(left, right)
+}
+
+const createSessionToken = (user) => {
+  const payload = encodeJson({
+    id: user.id,
+    displayName: user.displayName,
+    gameId: user.gameId,
+    role: user.role,
+    authProvider: user.authProvider,
+    blessingUserId: user.blessingUserId,
+    exp: Date.now() + sessionTtlMs
+  })
+  return `${payload}.${signSessionPayload(payload)}`
+}
+
+const verifySessionToken = (token) => {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null
+  const [payload, signature] = token.split('.')
+  if (!payload || !signature || !safeEqual(signSessionPayload(payload), signature)) return null
+  try {
+    const data = decodeJson(payload)
+    if (!data.exp || Date.now() > Number(data.exp)) return null
+    return {
+      id: String(data.id || ''),
+      displayName: String(data.displayName || ''),
+      gameId: String(data.gameId || ''),
+      role: data.role === 'admin' ? 'admin' : 'player',
+      authProvider: 'blessing',
+      blessingUserId: data.blessingUserId ? String(data.blessingUserId) : undefined
+    }
+  } catch {
+    return null
+  }
+}
+
+const userFromRequest = (req) => {
+  const header = req.headers.authorization || ''
+  const match = String(header).match(/^Bearer\s+(.+)$/i)
+  return match ? verifySessionToken(match[1]) : null
+}
+
+const deviceIdFromRequest = (req) => {
+  const value = Array.isArray(req.headers['x-device-id']) ? req.headers['x-device-id'][0] : req.headers['x-device-id']
+  const normalized = String(value || '').trim().replace(/[^a-zA-Z0-9_:-]/g, '-')
+  return normalized || ''
+}
+
+const viewerFromRequest = (req) => {
+  const user = userFromRequest(req)
+  if (user) return { user, userId: user.id, name: user.displayName, gameId: user.gameId, role: user.role }
+  const deviceId = deviceIdFromRequest(req)
+  if (deviceId) return { user: null, userId: `anon-${deviceId}`, name: '匿名玩家', gameId: '', role: 'player' }
+  return { user: null, userId: '', name: '匿名玩家', gameId: '', role: 'player' }
+}
+
+const httpError = (status, message) => {
+  const error = new Error(message)
+  error.status = status
+  return error
+}
+
+const requireAdmin = (req) => {
+  const user = userFromRequest(req)
+  if (!user) throw httpError(401, '请先登录管理员账号。')
+  if (user.role !== 'admin') throw httpError(403, '当前账号没有管理员权限。')
+  return user
+}
 
 const cleanupAuthMaps = () => {
   const ts = Date.now()
@@ -682,27 +761,125 @@ const normalizeState = (state) => ({
   auditLogs: state.auditLogs ?? []
 })
 
-const ensureDataDir = () => mkdir(dataDir, { recursive: true })
+const timeValue = (value) => {
+  if (!value) return null
+  const ts = Date.parse(value)
+  return Number.isFinite(ts) ? ts : null
+}
 
-const loadState = async () => {
+const normalizeDateInput = (value) => {
+  const ts = timeValue(value)
+  return ts ? new Date(ts).toISOString() : null
+}
+
+const validateSurveyTimeWindow = (startsAt, endsAt) => {
+  const start = timeValue(startsAt)
+  const end = timeValue(endsAt)
+  if (start && end && end <= start) throw httpError(400, '结束时间需要晚于开始时间。')
+}
+
+const isSurveyAcceptingSubmissions = (survey, ts = Date.now()) => {
+  if (!survey || survey.status !== 'open') return false
+  const startsAt = timeValue(survey.startsAt)
+  if (startsAt && ts < startsAt) return false
+  const endsAt = timeValue(survey.endsAt)
+  if (endsAt && ts >= endsAt) return false
+  return true
+}
+
+const publicVotesFor = (state, viewer) => {
+  const visible = []
+  for (const vote of state.votes) {
+    const survey = state.surveys.find((item) => item.id === vote.surveyId)
+    const isOwnVote = viewer.userId && vote.userId === viewer.userId
+    const canExposeAggregate = survey?.resultVisibility === 'always' ||
+      (survey?.resultVisibility === 'after_vote' && state.votes.some((item) => item.surveyId === vote.surveyId && item.userId === viewer.userId))
+    if (!isOwnVote && !canExposeAggregate) continue
+    visible.push({
+      id: isOwnVote ? vote.id : `public-${vote.id}`,
+      surveyId: vote.surveyId,
+      userId: isOwnVote ? vote.userId : `public-${vote.id}`,
+      userName: isOwnVote ? vote.userName : '匿名玩家',
+      gameId: isOwnVote ? vote.gameId : '',
+      candidateIds: Array.isArray(vote.candidateIds) ? [...vote.candidateIds] : [],
+      createdAt: vote.createdAt,
+      updatedAt: vote.updatedAt,
+      history: isOwnVote ? (vote.history ?? []) : []
+    })
+  }
+  return visible
+}
+
+const publicStateFor = (state, viewer) => ({
+  surveys: state.surveys,
+  candidates: state.candidates
+    .filter((candidate) => candidate.status === 'approved')
+    .map((candidate) => ({
+      ...candidate,
+      submitterUserId: '',
+      submitterName: '',
+      reviewedAt: undefined,
+      reviewerName: undefined,
+      reviewNote: undefined
+    })),
+  votes: publicVotesFor(state, viewer),
+  auditLogs: []
+})
+
+const stateForRequest = (state, req) => {
+  const viewer = viewerFromRequest(req)
+  return viewer.user?.role === 'admin' ? state : publicStateFor(state, viewer)
+}
+
+const ensureDataDir = () => mkdir(dataDir, { recursive: true })
+let stateWriteQueue = Promise.resolve()
+
+const readStateFile = async () => {
   await ensureDataDir()
   try {
     const raw = await readFile(stateFile, 'utf8')
-    const state = normalizeState(JSON.parse(raw))
-    await saveState(state)
-    return state
+    return normalizeState(JSON.parse(raw))
   } catch {
-    const seed = createSeedState()
-    await saveState(seed)
-    return seed
+    return createSeedState()
   }
 }
 
-const saveState = async (state) => {
+const writeStateFile = async (state) => {
   await ensureDataDir()
   const normalized = normalizeState(state)
-  await writeFile(stateFile, JSON.stringify(normalized, null, 2), 'utf8')
+  const tempFile = `${stateFile}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(tempFile, JSON.stringify(normalized, null, 2), 'utf8')
+  await rename(tempFile, stateFile)
   return normalized
+}
+
+const loadState = async () => {
+  const state = await readStateFile()
+  await saveState(state)
+  return state
+}
+
+const saveState = async (state) => {
+  const normalized = normalizeState(state)
+  stateWriteQueue = stateWriteQueue.then(() => writeStateFile(normalized), () => writeStateFile(normalized))
+  return stateWriteQueue
+}
+
+const updateState = async (mutator) => {
+  let output
+  stateWriteQueue = stateWriteQueue.then(async () => {
+    const state = await readStateFile()
+    output = await mutator(state)
+    await writeStateFile(state)
+    return output
+  }, async () => {
+    const state = await readStateFile()
+    output = await mutator(state)
+    await writeStateFile(state)
+    return output
+  })
+  await stateWriteQueue
+  return output
 }
 
 const readJsonBody = async (req) => {
@@ -712,12 +889,298 @@ const readJsonBody = async (req) => {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
+const validateUrl = (value) => {
+  if (!String(value || '').trim()) return true
+  try {
+    new URL(String(value))
+    return true
+  } catch {
+    return false
+  }
+}
+
+const normalizeTitle = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+const cleanFieldValues = (values = {}) =>
+  Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value ?? '').trim()]))
+
+const titleFromValues = (survey, values, fallback = '未命名候选项') =>
+  values.packName?.trim() || values.name?.trim() || values.title?.trim() ||
+  (survey.candidateFields ?? []).map((field) => values[field.key]).find(Boolean)?.trim() ||
+  fallback
+
+const validateCandidateValues = (survey, values) => {
+  for (const field of survey.candidateFields ?? []) {
+    const value = values[field.key] ?? ''
+    if (field.required && !value) throw httpError(400, `请填写「${field.label}」。`)
+    if (field.type === 'url' && !validateUrl(value)) throw httpError(400, `「${field.label}」需要是完整链接。`)
+  }
+}
+
+const normalizeCandidateFields = (fields = []) => fields.map((field, index) => ({
+  id: field.id || createId('field'),
+  key: String(field.key || `custom_field_${index + 1}`).trim().replace(/[^a-zA-Z0-9_]/g, '_'),
+  label: String(field.label || '').trim(),
+  type: ['text', 'textarea', 'url', 'select', 'number'].includes(field.type) ? field.type : 'text',
+  required: Boolean(field.required),
+  placeholder: String(field.placeholder || '').trim(),
+  options: Array.isArray(field.options) ? field.options.map((item) => String(item).trim()).filter(Boolean) : undefined
+}))
+
+const validateCandidateFields = (fields) => {
+  if (fields.some((field) => !field.key || !field.label)) throw httpError(400, '字段名称和 Key 不能为空。')
+  const keys = new Set()
+  for (const field of fields) {
+    if (keys.has(field.key)) throw httpError(400, `字段 key「${field.key}」重复。`)
+    keys.add(field.key)
+  }
+}
+
+const actorForSurvey = (req, survey, body = {}) => {
+  const viewer = viewerFromRequest(req)
+  if (survey.requireLogin) {
+    if (!viewer.user) throw httpError(401, '请先登录后再提交。')
+    return viewer
+  }
+  if (viewer.user) return viewer
+  const gameId = String(body.guestGameId || '').trim()
+  if (!gameId) throw httpError(400, '请填写游戏昵称。')
+  if (!viewer.userId) throw httpError(400, '缺少设备标识，请刷新页面后重试。')
+  return { ...viewer, name: gameId, gameId }
+}
+
+const ensureSurveyWritable = (survey) => {
+  if (!isSurveyAcceptingSubmissions(survey)) throw httpError(400, '当前问卷不在开放提交时间内。')
+}
+
+const submitVoteMutation = async (req, body) => updateState((state) => {
+  const survey = state.surveys.find((item) => item.id === body.surveyId)
+  if (!survey) throw httpError(404, '问卷不存在。')
+  ensureSurveyWritable(survey)
+  const actor = actorForSurvey(req, survey, body)
+  const voteLimit = survey.voteMode === 'single' ? 1 : Math.max(1, Number(survey.maxVotes) || 1)
+  const candidateIds = [...new Set(Array.isArray(body.candidateIds) ? body.candidateIds.map(String) : [])]
+  if (candidateIds.length === 0) throw httpError(400, '请至少选择一个候选项。')
+  if (candidateIds.length > voteLimit) throw httpError(400, `最多选择 ${voteLimit} 项。`)
+  const approvedIds = new Set(state.candidates.filter((item) => item.surveyId === survey.id && item.status === 'approved').map((item) => item.id))
+  if (candidateIds.some((id) => !approvedIds.has(id))) throw httpError(400, '选择中包含不可投票的候选项。')
+  const existing = state.votes.find((item) => item.surveyId === survey.id && item.userId === actor.userId)
+  const ts = now()
+  if (existing) {
+    if (!survey.allowVoteEdits) throw httpError(400, '你已经提交过本问卷，当前不允许修改。')
+    existing.history = existing.history ?? []
+    existing.history.push({ candidateIds: [...existing.candidateIds], changedAt: existing.updatedAt })
+    existing.candidateIds = candidateIds
+    existing.updatedAt = ts
+    state.auditLogs.unshift({ id: createId('log'), action: 'vote.updated', actor: actor.name, detail: `${actor.name} 修改了「${survey.title}」的投票`, surveyId: survey.id, createdAt: ts })
+  } else {
+    state.votes.push({
+      id: createId('vote'),
+      surveyId: survey.id,
+      userId: actor.userId,
+      userName: actor.name,
+      gameId: actor.gameId,
+      candidateIds,
+      createdAt: ts,
+      updatedAt: ts,
+      history: []
+    })
+    state.auditLogs.unshift({ id: createId('log'), action: 'vote.created', actor: actor.name, detail: `${actor.name} 提交了「${survey.title}」的投票`, surveyId: survey.id, createdAt: ts })
+  }
+  return stateForRequest(normalizeState(state), req)
+})
+
+const submitCandidateMutation = async (req, body) => updateState((state) => {
+  const survey = state.surveys.find((item) => item.id === body.surveyId)
+  if (!survey) throw httpError(404, '问卷不存在。')
+  ensureSurveyWritable(survey)
+  if (!survey.candidateSubmission?.enabled) throw httpError(400, '当前问卷没有开放候选项投稿。')
+  const actor = actorForSurvey(req, survey, body)
+  const values = cleanFieldValues(body.fields)
+  validateCandidateValues(survey, values)
+  const title = titleFromValues(survey, values)
+  if (state.candidates.find((item) => item.surveyId === survey.id && item.status !== 'rejected' && normalizeTitle(item.title) === normalizeTitle(title))) {
+    throw httpError(400, '已经存在同名候选项。')
+  }
+  const ts = now()
+  const status = survey.candidateSubmission.requiresReview ? 'pending' : 'approved'
+  state.candidates.unshift({
+    id: createId('candidate'),
+    surveyId: survey.id,
+    title,
+    status,
+    fields: values,
+    submitterUserId: actor.userId,
+    submitterName: actor.name,
+    createdAt: ts,
+    reviewedAt: status === 'approved' ? ts : undefined,
+    reviewerName: status === 'approved' ? 'Auto Review' : undefined
+  })
+  state.auditLogs.unshift({ id: createId('log'), action: 'candidate.submitted', actor: actor.name, detail: `${actor.name} 投稿了「${title}」`, surveyId: survey.id, createdAt: ts })
+  return { state: stateForRequest(normalizeState(state), req), candidateStatus: status }
+})
+
+const createSurveyMutation = async (req, body) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const title = String(body.title || '').trim()
+    if (!title) throw httpError(400, '请填写问卷标题。')
+    const fields = normalizeCandidateFields(body.candidateFields)
+    validateCandidateFields(fields)
+    const ts = now()
+    const survey = {
+      id: createId('survey'),
+      title,
+      description: String(body.description || '').trim() || '请选择你愿意参与的服务器方案。',
+      guideText: String(body.guideText || '').trim(),
+      status: 'draft',
+      startsAt: normalizeDateInput(body.startsAt),
+      endsAt: normalizeDateInput(body.endsAt),
+      resultVisibility: ['always', 'after_vote', 'hidden'].includes(body.resultVisibility) ? body.resultVisibility : 'always',
+      allowVoteEdits: Boolean(body.allowVoteEdits),
+      requireLogin: body.requireLogin !== false,
+      voteMode: body.voteMode === 'single' ? 'single' : 'multiple',
+      maxVotes: Math.max(1, Number(body.maxVotes) || 1),
+      candidateSubmission: {
+        enabled: body.candidateSubmission?.enabled !== false,
+        requiresReview: body.candidateSubmission?.requiresReview !== false
+      },
+      candidateFields: fields,
+      createdAt: ts,
+      updatedAt: ts
+    }
+    validateSurveyTimeWindow(survey.startsAt, survey.endsAt)
+    state.surveys.unshift(survey)
+    state.auditLogs.unshift({ id: createId('log'), action: 'survey.created', actor: admin.displayName, detail: `${admin.displayName} 创建了问卷「${survey.title}」`, surveyId: survey.id, createdAt: ts })
+    return { state: normalizeState(state), surveyId: survey.id }
+  })
+}
+
+const updateSurveyMutation = async (req, surveyId, body) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const survey = state.surveys.find((item) => item.id === surveyId)
+    if (!survey) throw httpError(404, '问卷不存在。')
+    if ('title' in body) {
+      const title = String(body.title || '').trim()
+      if (!title) throw httpError(400, '请填写问卷标题。')
+      survey.title = title
+    }
+    if ('description' in body) survey.description = String(body.description || '').trim() || '请选择你愿意参与的服务器方案。'
+    if ('guideText' in body) survey.guideText = String(body.guideText || '').trim()
+    if ('status' in body && ['draft', 'open', 'closed'].includes(body.status)) survey.status = body.status
+    if ('startsAt' in body) survey.startsAt = normalizeDateInput(body.startsAt)
+    if ('endsAt' in body) survey.endsAt = normalizeDateInput(body.endsAt)
+    validateSurveyTimeWindow(survey.startsAt, survey.endsAt)
+    if ('voteMode' in body) survey.voteMode = body.voteMode === 'single' ? 'single' : 'multiple'
+    if ('maxVotes' in body) survey.maxVotes = Math.max(1, Number(body.maxVotes) || 1)
+    if ('resultVisibility' in body && ['always', 'after_vote', 'hidden'].includes(body.resultVisibility)) survey.resultVisibility = body.resultVisibility
+    if ('allowVoteEdits' in body) survey.allowVoteEdits = Boolean(body.allowVoteEdits)
+    if ('requireLogin' in body) survey.requireLogin = Boolean(body.requireLogin)
+    if ('candidateSubmission' in body) {
+      survey.candidateSubmission = {
+        enabled: body.candidateSubmission?.enabled !== false,
+        requiresReview: body.candidateSubmission?.requiresReview !== false
+      }
+    }
+    survey.updatedAt = now()
+    state.auditLogs.unshift({ id: createId('log'), action: 'survey.settings_saved', actor: admin.displayName, detail: `${admin.displayName} 保存了问卷「${survey.title}」的设置`, surveyId: survey.id, createdAt: survey.updatedAt })
+    return normalizeState(state)
+  })
+}
+
+const updateSurveyFieldsMutation = async (req, surveyId, body) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const survey = state.surveys.find((item) => item.id === surveyId)
+    if (!survey) throw httpError(404, '问卷不存在。')
+    const fields = normalizeCandidateFields(body.candidateFields)
+    validateCandidateFields(fields)
+    survey.candidateFields = fields
+    survey.updatedAt = now()
+    state.auditLogs.unshift({ id: createId('log'), action: 'survey.fields_saved', actor: admin.displayName, detail: `${admin.displayName} 保存了问卷「${survey.title}」的投稿字段`, surveyId: survey.id, createdAt: survey.updatedAt })
+    return normalizeState(state)
+  })
+}
+
+const deleteSurveyMutation = async (req, surveyId) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const survey = state.surveys.find((item) => item.id === surveyId)
+    if (!survey) throw httpError(404, '问卷不存在。')
+    if (state.surveys.length <= 1) throw httpError(400, '至少需要保留一个问卷。')
+    state.surveys = state.surveys.filter((item) => item.id !== surveyId)
+    state.candidates = state.candidates.filter((item) => item.surveyId !== surveyId)
+    state.votes = state.votes.filter((item) => item.surveyId !== surveyId)
+    state.auditLogs = state.auditLogs.filter((item) => item.surveyId !== surveyId)
+    state.auditLogs.unshift({ id: createId('log'), action: 'survey.deleted', actor: admin.displayName, detail: `${admin.displayName} 删除了问卷「${survey.title}」及其关联数据`, createdAt: now() })
+    return normalizeState(state)
+  })
+}
+
+const createAdminCandidateMutation = async (req, body) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const survey = state.surveys.find((item) => item.id === body.surveyId)
+    if (!survey) throw httpError(404, '问卷不存在。')
+    const values = cleanFieldValues(body.fields)
+    validateCandidateValues(survey, values)
+    const title = titleFromValues(survey, values)
+    if (state.candidates.find((item) => item.surveyId === survey.id && item.status !== 'rejected' && normalizeTitle(item.title) === normalizeTitle(title))) {
+      throw httpError(400, '当前问卷已经存在同名候选项。')
+    }
+    const ts = now()
+    state.candidates.unshift({
+      id: createId('candidate'),
+      surveyId: survey.id,
+      title,
+      status: 'approved',
+      fields: values,
+      submitterUserId: admin.id,
+      submitterName: admin.displayName,
+      createdAt: ts,
+      reviewedAt: ts,
+      reviewerName: admin.displayName
+    })
+    state.auditLogs.unshift({ id: createId('log'), action: 'candidate.admin_created', actor: admin.displayName, detail: `${admin.displayName} 添加了「${title}」作为「${survey.title}」的候选项`, surveyId: survey.id, createdAt: ts })
+    return normalizeState(state)
+  })
+}
+
+const updateAdminCandidateMutation = async (req, candidateId, body) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const candidate = state.candidates.find((item) => item.id === candidateId)
+    if (!candidate) throw httpError(404, '候选项不存在。')
+    const survey = state.surveys.find((item) => item.id === candidate.surveyId)
+    if (!survey) throw httpError(404, '候选项所属问卷不存在。')
+    if (body.fields) {
+      const values = cleanFieldValues(body.fields)
+      validateCandidateValues(survey, values)
+      const title = titleFromValues(survey, values, candidate.title)
+      if (state.candidates.find((item) => item.id !== candidate.id && item.surveyId === candidate.surveyId && item.status !== 'rejected' && normalizeTitle(item.title) === normalizeTitle(title))) {
+        throw httpError(400, '当前问卷已经存在同名候选项。')
+      }
+      candidate.title = title
+      candidate.fields = { ...candidate.fields, ...values }
+      state.auditLogs.unshift({ id: createId('log'), action: 'candidate.edited', actor: admin.displayName, detail: `${admin.displayName} 修改了候选项「${title}」`, surveyId: candidate.surveyId, createdAt: now() })
+    }
+    if (body.status && ['pending', 'approved', 'rejected'].includes(body.status)) {
+      candidate.status = body.status
+      candidate.reviewNote = String(body.reviewNote ?? candidate.reviewNote ?? '')
+      state.auditLogs.unshift({ id: createId('log'), action: `candidate.${body.status}`, actor: admin.displayName, detail: `${admin.displayName} 将「${candidate.title}」标记为 ${body.status}`, surveyId: candidate.surveyId, createdAt: now() })
+    }
+    candidate.reviewedAt = now()
+    candidate.reviewerName = admin.displayName
+    return normalizeState(state)
+  })
+}
+
 const sendJson = (res, statusCode, body) => {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id'
   })
   res.end(JSON.stringify(body))
 }
@@ -726,8 +1189,8 @@ const sendText = (res, statusCode, body) => {
   res.writeHead(statusCode, {
     'Content-Type': 'text/plain; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id'
   })
   res.end(body)
 }
@@ -852,7 +1315,7 @@ const handleApi = async (req, res, pathname) => {
       }
       const user = mapBlessingUser(profile)
       const ticket = createToken('auth-ticket')
-      authTickets.set(ticket, { user, expiresAt: Date.now() + authTicketTtlMs })
+      authTickets.set(ticket, { user, sessionToken: createSessionToken(user), expiresAt: Date.now() + authTicketTtlMs })
       redirectToFrontend(res, stateEntry.returnTo, { auth_ticket: ticket })
     } catch (error) {
       redirectToFrontend(res, stateEntry.returnTo, {
@@ -872,17 +1335,55 @@ const handleApi = async (req, res, pathname) => {
       return
     }
     authTickets.delete(ticket)
-    sendJson(res, 200, entry.user)
+    sendJson(res, 200, { user: entry.user, sessionToken: entry.sessionToken })
     return
   }
 
   if (pathname === '/api/state' && req.method === 'GET') {
-    sendJson(res, 200, await loadState())
+    sendJson(res, 200, stateForRequest(await loadState(), req))
     return
   }
 
-  if (pathname === '/api/state' && req.method === 'PUT') {
-    sendJson(res, 200, await saveState(await readJsonBody(req)))
+  if (pathname === '/api/votes' && req.method === 'POST') {
+    sendJson(res, 200, await submitVoteMutation(req, await readJsonBody(req)))
+    return
+  }
+
+  if (pathname === '/api/candidates' && req.method === 'POST') {
+    sendJson(res, 200, await submitCandidateMutation(req, await readJsonBody(req)))
+    return
+  }
+
+  if (pathname === '/api/admin/surveys' && req.method === 'POST') {
+    sendJson(res, 200, await createSurveyMutation(req, await readJsonBody(req)))
+    return
+  }
+
+  const surveyFieldsMatch = pathname.match(/^\/api\/admin\/surveys\/([^/]+)\/fields$/)
+  if (surveyFieldsMatch && req.method === 'PUT') {
+    sendJson(res, 200, await updateSurveyFieldsMutation(req, decodeURIComponent(surveyFieldsMatch[1]), await readJsonBody(req)))
+    return
+  }
+
+  const surveyMatch = pathname.match(/^\/api\/admin\/surveys\/([^/]+)$/)
+  if (surveyMatch && req.method === 'PATCH') {
+    sendJson(res, 200, await updateSurveyMutation(req, decodeURIComponent(surveyMatch[1]), await readJsonBody(req)))
+    return
+  }
+
+  if (surveyMatch && req.method === 'DELETE') {
+    sendJson(res, 200, await deleteSurveyMutation(req, decodeURIComponent(surveyMatch[1])))
+    return
+  }
+
+  if (pathname === '/api/admin/candidates' && req.method === 'POST') {
+    sendJson(res, 200, await createAdminCandidateMutation(req, await readJsonBody(req)))
+    return
+  }
+
+  const candidateMatch = pathname.match(/^\/api\/admin\/candidates\/([^/]+)$/)
+  if (candidateMatch && req.method === 'PATCH') {
+    sendJson(res, 200, await updateAdminCandidateMutation(req, decodeURIComponent(candidateMatch[1]), await readJsonBody(req)))
     return
   }
 
@@ -898,7 +1399,8 @@ const server = createServer(async (req, res) => {
     }
     await serveStatic(req, res)
   } catch (error) {
-    sendJson(res, 500, { error: error instanceof Error ? error.message : 'Internal server error' })
+    const status = error instanceof Error && Number(error.status) ? Number(error.status) : 500
+    sendJson(res, status, { error: error instanceof Error ? error.message : 'Internal server error' })
   }
 })
 

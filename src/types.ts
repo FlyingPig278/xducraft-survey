@@ -80,6 +80,7 @@ export interface AuthUser {
   role: UserRole
   authProvider: 'blessing'
   blessingUserId?: string
+  sessionToken?: string
 }
 
 export interface AuditLog {

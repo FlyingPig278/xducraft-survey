@@ -4,6 +4,7 @@ import { createId } from '../storage'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { fieldOptions } from './useCandidateFields'
+import { surveyApi } from '../api'
 
 const fieldDrafts = ref<FieldDefinition[]>([])
 const draggedFieldId = ref('')
@@ -20,7 +21,7 @@ const newField = reactive({
 const cloneField = (f: FieldDefinition): FieldDefinition => ({ ...f, id: f.id || createId('field'), options: f.options ? [...f.options] : undefined })
 
 export function useAdminFields() {
-  const { survey, appState, persist, addAudit, message } = useAppState()
+  const { survey, appState, applyRemoteState, message } = useAppState()
   const { isAdmin, currentUser } = useAuth()
 
   const fieldsDirty = computed(() => JSON.stringify(survey.value.candidateFields) !== JSON.stringify(fieldDrafts.value))
@@ -93,10 +94,12 @@ export function useAdminFields() {
       if (keySet.has(field.key)) { message.warning(`字段 key「${field.key}」重复。`); return false }
       keySet.add(field.key)
     }
-    survey.value.candidateFields = normalized.map(cloneField)
-    survey.value.updatedAt = new Date().toISOString()
-    addAudit('survey.fields_saved', `${currentUser.value.displayName} 保存了问卷「${survey.value.title}」的投稿字段`, surveyId, currentUser.value.displayName)
-    if (!(await persist(surveyId))) return false
+    try {
+      applyRemoteState(await surveyApi.updateSurveyFields(surveyId, normalized.map(cloneField)), surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '字段保存失败')
+      return false
+    }
     syncFieldDrafts()
     message.success(successText)
     return true

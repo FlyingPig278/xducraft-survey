@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import type { AuthUser, UserRole } from '../types'
-import { loadUser, saveUser } from '../storage'
+import { getDeviceId, loadUser, saveUser } from '../storage'
 import { surveyApi } from '../api'
 import { useAppState } from './useAppState'
 
@@ -10,15 +10,9 @@ const guestNameModalOpen = ref(false)
 let guestNameResolve: ((confirmed: boolean) => void) | null = null
 
 export function useAuth() {
-  const { message } = useAppState()
+  const { loadAppState, message } = useAppState()
   const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
-  const DEVICE_KEY = 'xducraft-survey-device-id-v1'
-  const getDeviceId = () => {
-    let v = localStorage.getItem(DEVICE_KEY)
-    if (!v) { v = `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; localStorage.setItem(DEVICE_KEY, v) }
-    return v
-  }
   const anonymousUserId = computed(() => `anon-${getDeviceId()}`)
   const effectiveUserId = computed(() => currentUser.value?.id ?? anonymousUserId.value)
   const anonymousGameId = () => guestDraft.gameId.trim()
@@ -43,7 +37,8 @@ export function useAuth() {
       return
     }
     try {
-      currentUser.value = await surveyApi.consumeBlessingTicket(ticket!)
+      const session = await surveyApi.consumeBlessingTicket(ticket!)
+      currentUser.value = { ...session.user, sessionToken: session.sessionToken }
       saveUser(currentUser.value)
       if (currentUser.value.role === 'admin') {
         message.success('已登录管理员账号')
@@ -71,7 +66,12 @@ export function useAuth() {
     }
   }
 
-  const logout = () => { currentUser.value = null; saveUser(null); message.info('已退出登录') }
+  const logout = () => {
+    currentUser.value = null
+    saveUser(null)
+    void loadAppState({ silent: true })
+    message.info('已退出登录')
+  }
 
   const requestGuestName = (): Promise<boolean> => {
     if (currentUser.value || guestDraft.gameId.trim()) return Promise.resolve(true)
