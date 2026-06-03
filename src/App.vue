@@ -895,12 +895,12 @@ const downloadFile = (name: string, content: string, type: string) => {
                         </template>
                         <div class="candidate-intro">{{ candidateIntro(row.candidate) }}</div>
                       </n-popover>
+                      <span v-if="candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" class="candidate-card-actions">
+                        <button v-if="candidatePackUrl(row.candidate)" class="candidate-icon-btn is-download" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click="openExternal(candidatePackUrl(row.candidate))"></button>
+                        <button v-if="candidateVideoUrl(row.candidate)" class="candidate-icon-btn is-video" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click="openExternal(candidateVideoUrl(row.candidate))"></button>
+                      </span>
                     </div>
                     <div class="result-item-meta">{{ candidateMeta(row.candidate) || '未填写补充信息' }}</div>
-                    <n-space v-if="candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" :size="6" class="candidate-card-actions">
-                      <n-button v-if="candidatePackUrl(row.candidate)" size="tiny" quaternary @click="openExternal(candidatePackUrl(row.candidate))">整合包</n-button>
-                      <n-button v-if="candidateVideoUrl(row.candidate)" size="tiny" quaternary @click="openExternal(candidateVideoUrl(row.candidate))">视频</n-button>
-                    </n-space>
                     <n-progress :percentage="row.percent" :show-indicator="false" :height="6" style="margin-top: 8px" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
                   </div>
                   <div class="result-item-count">{{ row.count }} 票 <span style="color: #94a3b8; font-weight: 400; font-size: 13px">({{ row.percent }}%)</span></div>
@@ -936,12 +936,12 @@ const downloadFile = (name: string, content: string, type: string) => {
                       </template>
                       <div class="candidate-intro">{{ candidateIntro(candidate) }}</div>
                     </n-popover>
+                    <span v-if="candidatePackUrl(candidate) || candidateVideoUrl(candidate)" class="candidate-card-actions">
+                      <button v-if="candidatePackUrl(candidate)" class="candidate-icon-btn is-download" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(candidatePackUrl(candidate))"></button>
+                      <button v-if="candidateVideoUrl(candidate)" class="candidate-icon-btn is-video" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(candidateVideoUrl(candidate))"></button>
+                    </span>
                   </div>
                   <div class="candidate-card-meta">{{ candidateMeta(candidate) || '未填写补充信息' }}</div>
-                  <n-space v-if="candidatePackUrl(candidate) || candidateVideoUrl(candidate)" :size="6" class="candidate-card-actions">
-                    <n-button v-if="candidatePackUrl(candidate)" size="tiny" quaternary @click.stop="openExternal(candidatePackUrl(candidate))">整合包</n-button>
-                    <n-button v-if="candidateVideoUrl(candidate)" size="tiny" quaternary @click.stop="openExternal(candidateVideoUrl(candidate))">视频</n-button>
-                  </n-space>
                   <div v-if="canViewResultsBeforeVote" class="candidate-card-stats">
                     <n-progress :percentage="percentForCandidate(candidate.id)" :show-indicator="false" :height="5" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
                   </div>
@@ -1218,12 +1218,12 @@ const downloadFile = (name: string, content: string, type: string) => {
                             </template>
                             <div class="candidate-intro">{{ candidateIntro(c) }}</div>
                           </n-popover>
+                          <span v-if="candidatePackUrl(c) || candidateVideoUrl(c)" class="candidate-card-actions">
+                            <button v-if="candidatePackUrl(c)" class="candidate-icon-btn is-download" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(candidatePackUrl(c))"></button>
+                            <button v-if="candidateVideoUrl(c)" class="candidate-icon-btn is-video" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(candidateVideoUrl(c))"></button>
+                          </span>
                         </div>
                         <div class="candidate-card-meta">{{ candidateMeta(c) || '未填写补充信息' }}</div>
-                        <n-space v-if="candidatePackUrl(c) || candidateVideoUrl(c)" :size="6" class="candidate-card-actions">
-                          <n-button v-if="candidatePackUrl(c)" size="tiny" quaternary @click.stop="openExternal(candidatePackUrl(c))">整合包</n-button>
-                          <n-button v-if="candidateVideoUrl(c)" size="tiny" quaternary @click.stop="openExternal(candidateVideoUrl(c))">视频</n-button>
-                        </n-space>
                         <div v-if="canViewResultsBeforeVote" class="candidate-card-stats">
                           <n-progress :percentage="percentForCandidate(c.id)" :show-indicator="false" :height="5" :color="'#6366f1'" :rail-color="'#e2e8f0'" />
                         </div>
