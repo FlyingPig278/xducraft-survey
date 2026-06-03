@@ -63,6 +63,7 @@ const statusMessage = ref('')
 const submissionMessage = ref('')
 const reviewNotes = ref<Record<string, string>>({})
 const submissionValues = ref<Record<string, string>>({})
+const adminCandidateValues = ref<Record<string, string>>({})
 const voteConfirmOpen = ref(false)
 const candidateModalOpen = ref(false)
 const submittedSurveyId = ref('')
@@ -372,6 +373,18 @@ const resetSubmissionValues = () => {
   submissionValues.value = next
 }
 
+const initAdminCandidateValues = () => {
+  const next: Record<string, string> = {}
+  survey.value.candidateFields.forEach((f) => { next[f.key] = adminCandidateValues.value[f.key] ?? '' })
+  adminCandidateValues.value = next
+}
+
+const resetAdminCandidateValues = () => {
+  const next: Record<string, string> = {}
+  survey.value.candidateFields.forEach((f) => { next[f.key] = '' })
+  adminCandidateValues.value = next
+}
+
 const syncSelectionFromVote = () => {
   selectedCandidateIds.value = currentVote.value ? currentVote.value.candidateIds.filter((id) => approvedCandidateIds.value.has(id)) : []
 }
@@ -397,11 +410,12 @@ watch(() => (route.value.mode === 'admin' ? route.value.surveyId : undefined), (
 }, { immediate: true })
 
 watch(() => survey.value.id, () => {
-  syncSurveySettingsDraft(); syncFieldDrafts(); initSubmissionValues(); syncSelectionFromVote(); statusMessage.value = ''; submissionMessage.value = ''; voteConfirmOpen.value = false; candidateModalOpen.value = false; editingVote.value = false
+  syncSurveySettingsDraft(); syncFieldDrafts(); initSubmissionValues(); initAdminCandidateValues(); syncSelectionFromVote(); statusMessage.value = ''; submissionMessage.value = ''; voteConfirmOpen.value = false; candidateModalOpen.value = false; editingVote.value = false
 }, { immediate: true })
 
 watch(currentUser, syncSelectionFromVote, { immediate: true })
 watch(() => `${survey.value.id}:${survey.value.candidateFields.map((f) => `${f.id}:${f.key}`).join('|')}`, initSubmissionValues, { immediate: true })
+watch(() => `${survey.value.id}:${survey.value.candidateFields.map((f) => `${f.id}:${f.key}`).join('|')}`, initAdminCandidateValues, { immediate: true })
 watch(() => `${survey.value.id}:${surveyVotes.value.map((v) => `${v.userId}:${v.updatedAt}`).join('|')}`, syncSelectionFromVote)
 watch(() => approvedCandidates.value.map((c) => c.id).join('|'), () => {
   selectedCandidateIds.value = selectedCandidateIds.value.filter((id) => approvedCandidateIds.value.has(id))
@@ -509,6 +523,45 @@ const submitCandidate = async () => {
   resetSubmissionValues()
   candidateModalOpen.value = false
   message.success(status === 'pending' ? '候选项已提交，等待管理员审核。' : '候选项已进入投票列表。')
+}
+
+const titleFromCandidateValues = (values: Record<string, string>) =>
+  values.packName?.trim() ||
+  values.name?.trim() ||
+  values.title?.trim() ||
+  survey.value.candidateFields.map((field) => values[field.key]).find(Boolean)?.trim() ||
+  '未命名候选项'
+
+const createAdminCandidate = async () => {
+  if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+  const surveyId = survey.value.id
+  for (const field of survey.value.candidateFields) {
+    const val = adminCandidateValues.value[field.key]?.trim() ?? ''
+    if (field.required && !val) { message.warning(`请填写「${field.label}」。`); return }
+    if (field.type === 'url' && !validateUrl(val)) { message.warning(`「${field.label}」需要是完整链接。`); return }
+  }
+  const title = titleFromCandidateValues(adminCandidateValues.value)
+  if (appState.value.candidates.find((c) => c.surveyId === surveyId && c.status !== 'rejected' && normalize(c.title) === normalize(title))) {
+    message.warning('当前问卷已经存在同名候选项。')
+    return
+  }
+  const ts = new Date().toISOString()
+  appState.value.candidates.unshift({
+    id: createId('candidate'),
+    surveyId,
+    title,
+    status: 'approved',
+    fields: { ...adminCandidateValues.value },
+    submitterUserId: currentUser.value.id,
+    submitterName: currentUser.value.displayName,
+    createdAt: ts,
+    reviewedAt: ts,
+    reviewerName: currentUser.value.displayName
+  })
+  addAudit('candidate.admin_created', `${currentUser.value.displayName} 添加了「${title}」作为「${survey.value.title}」的候选项`)
+  if (!(await persist(surveyId))) return
+  resetAdminCandidateValues()
+  message.success(`候选项「${title}」已加入当前问卷`)
 }
 
 const setCandidateStatus = async (candidate: Candidate, status: CandidateStatus) => {
@@ -767,6 +820,7 @@ const downloadFile = (name: string, content: string, type: string) => {
           <!-- Voting view -->
           <template v-else>
             <n-space vertical :size="8">
+              <n-empty v-if="approvedCandidates.length === 0" description="当前还没有已通过候选项" />
               <div
                 v-for="candidate in approvedCandidates"
                 :key="candidate.id"
@@ -1041,6 +1095,7 @@ const downloadFile = (name: string, content: string, type: string) => {
                   </template>
                   <p style="color: #64748b; margin: 0 0 16px; line-height: 1.6">{{ surveyGuideText }}</p>
                   <n-space vertical :size="8">
+                    <n-empty v-if="approvedCandidates.length === 0" description="当前还没有已通过候选项" />
                     <div v-for="c in approvedCandidates" :key="c.id" class="candidate-card" style="cursor: default">
                       <div class="candidate-card-check"></div>
                       <div class="candidate-card-body">
@@ -1169,6 +1224,50 @@ const downloadFile = (name: string, content: string, type: string) => {
                 <n-button :type="candidateFilter === 'all' ? 'primary' : 'default'" size="small" @click="candidateFilter = 'all'">全部</n-button>
               </n-space>
             </div>
+
+            <n-card title="添加当前问卷候选项" size="small" style="margin-bottom: 16px">
+              <template #header-extra>
+                <n-select v-model:value="adminSurveyId" :options="surveySelectOptions" style="width: 240px" />
+              </template>
+              <n-alert v-if="survey.candidateFields.length === 0" type="warning" :bordered="false">
+                当前问卷还没有候选项投稿字段，请先到字段配置中添加字段。
+              </n-alert>
+              <template v-else>
+                <n-form label-placement="top" :show-feedback="false">
+                  <div class="modal-form-grid">
+                    <n-form-item
+                      v-for="field in survey.candidateFields"
+                      :key="field.id"
+                      :label="`${field.label}${field.required ? ' *' : ''}`"
+                      :class="{ 'modal-form-full': field.type === 'textarea' }"
+                    >
+                      <n-select
+                        v-if="field.type === 'select'"
+                        v-model:value="adminCandidateValues[field.key]"
+                        :options="fieldSelectOptions(field)"
+                        placeholder="请选择"
+                      />
+                      <n-input
+                        v-else-if="field.type === 'textarea'"
+                        v-model:value="adminCandidateValues[field.key]"
+                        type="textarea"
+                        :rows="3"
+                        :placeholder="field.placeholder"
+                      />
+                      <n-input
+                        v-else
+                        v-model:value="adminCandidateValues[field.key]"
+                        :placeholder="field.placeholder"
+                      />
+                    </n-form-item>
+                  </div>
+                  <n-space justify="end" style="margin-top: 16px" :size="12">
+                    <n-button @click="resetAdminCandidateValues">重置</n-button>
+                    <n-button type="primary" @click="createAdminCandidate">添加为已通过候选项</n-button>
+                  </n-space>
+                </n-form>
+              </template>
+            </n-card>
 
             <n-empty v-if="adminCandidateRows.length === 0" description="当前筛选下没有候选项" />
             <n-space v-else vertical :size="12">
