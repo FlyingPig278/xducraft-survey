@@ -12,6 +12,14 @@ const apiLoading = ref(true)
 const apiError = ref('')
 const stateRevision = ref(0)
 const adminSurveyId = ref(appState.value.surveys[0]?.id ?? '')
+const REMOTE_SYNC_INTERVAL_MS = 3000
+let remoteSyncTimer: number | undefined
+let remoteSyncInFlight = false
+
+interface LoadAppStateOptions {
+  silent?: boolean
+  preferredSurveyId?: string
+}
 
 const activeSurveyId = computed(() =>
   route.value.mode === 'survey' ? route.value.surveyId : adminSurveyId.value
@@ -59,23 +67,53 @@ export function useAppState() {
     }
   }
 
-  const loadAppState = async () => {
-    apiLoading.value = true
+  const loadAppState = async (options: LoadAppStateOptions = {}) => {
+    if (remoteSyncInFlight) return null
+    remoteSyncInFlight = true
+    const silent = options.silent ?? false
+    if (!silent) apiLoading.value = true
     apiError.value = ''
     const revisionAtStart = stateRevision.value
     try {
       const nextState = await surveyApi.getState()
       if (revisionAtStart === stateRevision.value) {
-        applyRemoteState(nextState, route.value.mode === 'admin' ? route.value.surveyId : adminSurveyId.value)
+        applyRemoteState(nextState, options.preferredSurveyId ?? (route.value.mode === 'admin' ? route.value.surveyId : adminSurveyId.value))
       }
       return nextState
     } catch (error) {
       apiError.value = error instanceof Error ? error.message : '无法连接 API 服务'
-      message.error('无法连接 API 服务，请确认后端已启动。')
+      if (!silent) message.error('无法连接 API 服务，请确认后端已启动。')
       return null
     } finally {
-      apiLoading.value = false
+      remoteSyncInFlight = false
+      if (!silent) apiLoading.value = false
     }
+  }
+
+  const syncRemoteState = () => {
+    void loadAppState({ silent: true })
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') syncRemoteState()
+  }
+
+  const startRemoteSync = () => {
+    if (typeof window === 'undefined') return
+    stopRemoteSync()
+    remoteSyncTimer = window.setInterval(syncRemoteState, REMOTE_SYNC_INTERVAL_MS)
+    window.addEventListener('focus', syncRemoteState)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  }
+
+  const stopRemoteSync = () => {
+    if (typeof window === 'undefined') return
+    if (remoteSyncTimer !== undefined) {
+      window.clearInterval(remoteSyncTimer)
+      remoteSyncTimer = undefined
+    }
+    window.removeEventListener('focus', syncRemoteState)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 
   const persist = async (preferredSurveyId = activeSurveyId.value): Promise<boolean> => {
@@ -119,6 +157,8 @@ export function useAppState() {
     surveyTitleById,
     applyRemoteState,
     loadAppState,
+    startRemoteSync,
+    stopRemoteSync,
     persist,
     addAudit,
     resetDemo,

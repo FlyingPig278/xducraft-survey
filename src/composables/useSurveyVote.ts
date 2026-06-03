@@ -46,9 +46,21 @@ export function useSurveyVote() {
   const countForCandidate = (id: string) => candidateCounts.value.get(id) ?? 0
   const percentForCandidate = (id: string) => totalVoters.value > 0 ? Math.round((countForCandidate(id) / totalVoters.value) * 100) : 0
 
+  const pruneSelectionToApproved = () => {
+    const next = selectedCandidateIds.value.filter((id) => approvedCandidateIds.value.has(id))
+    if (next.length !== selectedCandidateIds.value.length) selectedCandidateIds.value = next
+  }
+
+  const clampSelectionToVoteLimit = () => {
+    pruneSelectionToApproved()
+    if (selectedCandidateIds.value.length > voteLimit.value) {
+      selectedCandidateIds.value = selectedCandidateIds.value.slice(0, voteLimit.value)
+    }
+  }
+
   const syncSelectionFromVote = () => {
     selectedCandidateIds.value = currentVote.value
-      ? currentVote.value.candidateIds.filter((id) => approvedCandidateIds.value.has(id))
+      ? [...new Set(currentVote.value.candidateIds.filter((id) => approvedCandidateIds.value.has(id)))].slice(0, voteLimit.value)
       : []
   }
 
@@ -81,7 +93,11 @@ export function useSurveyVote() {
   const confirmSubmitVote = async () => {
     const valid = selectedCandidateIds.value.filter((id) => approvedCandidateIds.value.has(id))
     selectedCandidateIds.value = [...new Set(valid)]
-    if (selectedCandidateIds.value.length === 0 || selectedCandidateIds.value.length > voteLimit.value) return
+    if (selectedCandidateIds.value.length === 0) return
+    if (selectedCandidateIds.value.length > voteLimit.value) {
+      message.warning(`最多选择 ${voteLimit.value} 项。`)
+      return
+    }
     const surveyId = survey.value.id
     const ts = new Date().toISOString()
     if (currentVote.value) {
@@ -170,6 +186,8 @@ export function useSurveyVote() {
     isSelected,
     countForCandidate,
     percentForCandidate,
+    pruneSelectionToApproved,
+    clampSelectionToVoteLimit,
     syncSelectionFromVote,
     toggleCandidate,
     openVoteConfirm,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 import { useAppState } from './composables/useAppState'
 import { useRouter } from './composables/useRouter'
@@ -11,15 +11,31 @@ import { useAdminCandidates } from './composables/useAdminCandidates'
 import SurveyPage from './components/survey/SurveyPage.vue'
 import AdminShell from './components/admin/AdminShell.vue'
 
-const { survey, loadAppState } = useAppState()
+const { survey, loadAppState, startRemoteSync, stopRemoteSync } = useAppState()
 const { isAdminRoute } = useRouter()
 const { currentUser } = useAuth()
-const { syncSelectionFromVote, initSubmissionValues, editingVote, voteConfirmOpen, candidateModalOpen, submittedSurveyId, submissionMessage } = useSurveyVote()
+const {
+  syncSelectionFromVote,
+  pruneSelectionToApproved,
+  clampSelectionToVoteLimit,
+  initSubmissionValues,
+  approvedCandidates,
+  currentVote,
+  editingVote,
+  voteConfirmOpen,
+  candidateModalOpen,
+  submissionMessage
+} = useSurveyVote()
 const { syncSurveySettingsDraft } = useAdminSurvey()
 const { syncFieldDrafts } = useAdminFields()
 const { initAdminCandidateValues } = useAdminCandidates()
 
-onMounted(() => { void loadAppState() })
+onMounted(() => {
+  void loadAppState()
+  startRemoteSync()
+})
+
+onBeforeUnmount(stopRemoteSync)
 
 watch(() => survey.value.id, () => {
   syncSurveySettingsDraft()
@@ -34,6 +50,26 @@ watch(() => survey.value.id, () => {
 }, { immediate: true })
 
 watch(currentUser, syncSelectionFromVote, { immediate: true })
+
+watch(
+  () => currentVote.value
+    ? `${survey.value.id}:${currentVote.value.updatedAt}:${currentVote.value.candidateIds.join(',')}`
+    : `${survey.value.id}:no-current-vote`,
+  syncSelectionFromVote,
+  { immediate: true }
+)
+
+watch(
+  () => `${survey.value.id}:${approvedCandidates.value.map((c) => c.id).join('|')}`,
+  pruneSelectionToApproved,
+  { immediate: true }
+)
+
+watch(
+  () => `${survey.value.id}:${survey.value.voteMode}:${survey.value.maxVotes}`,
+  clampSelectionToVoteLimit,
+  { immediate: true }
+)
 
 watch(
   () => `${survey.value.id}:${survey.value.candidateFields.map((f) => `${f.id}:${f.key}`).join('|')}`,
