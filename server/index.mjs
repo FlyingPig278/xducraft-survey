@@ -587,12 +587,34 @@ const normalizeSurvey = (survey) => {
   }
 }
 
+const normalizeCandidates = (candidates = []) => {
+  const surveyCounters = new Map()
+  return candidates.map((candidate) => {
+    const surveyId = candidate.surveyId || ''
+    const fallbackOrder = surveyCounters.get(surveyId) ?? 0
+    surveyCounters.set(surveyId, fallbackOrder + 1000)
+    const sortOrder = Number(candidate.sortOrder)
+    return {
+      ...candidate,
+      sortOrder: Number.isFinite(sortOrder) ? sortOrder : fallbackOrder
+    }
+  })
+}
+
 const normalizeState = (state) => ({
   surveys: (state.surveys ?? []).map(normalizeSurvey),
-  candidates: state.candidates ?? [],
+  candidates: normalizeCandidates(state.candidates),
   votes: state.votes ?? [],
   auditLogs: state.auditLogs ?? []
 })
+
+const nextCandidateSortOrder = (state, surveyId) => {
+  const orders = state.candidates
+    .filter((candidate) => candidate.surveyId === surveyId)
+    .map((candidate) => Number(candidate.sortOrder))
+    .filter(Number.isFinite)
+  return orders.length > 0 ? Math.max(...orders) + 1000 : 0
+}
 
 const timeValue = (value) => {
   if (!value) return null
@@ -841,6 +863,7 @@ const submitCandidateMutation = async (req, body) => updateState((state) => {
     surveyId: survey.id,
     title,
     status,
+    sortOrder: nextCandidateSortOrder(state, survey.id),
     fields: values,
     submitterUserId: actor.userId,
     submitterName: actor.name,
@@ -967,6 +990,7 @@ const createAdminCandidateMutation = async (req, body) => {
       surveyId: survey.id,
       title,
       status: 'approved',
+      sortOrder: nextCandidateSortOrder(state, survey.id),
       fields: values,
       submitterUserId: admin.id,
       submitterName: admin.displayName,
@@ -1004,6 +1028,27 @@ const updateAdminCandidateMutation = async (req, candidateId, body) => {
     }
     candidate.reviewedAt = now()
     candidate.reviewerName = admin.displayName
+    return normalizeState(state)
+  })
+}
+
+const reorderAdminCandidatesMutation = async (req, body) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const survey = state.surveys.find((item) => item.id === body.surveyId)
+    if (!survey) throw httpError(404, '问卷不存在。')
+    const ids = Array.isArray(body.candidateIds) ? body.candidateIds.map(String) : []
+    if (ids.length === 0) throw httpError(400, '候选项排序不能为空。')
+    const surveyCandidates = state.candidates.filter((item) => item.surveyId === survey.id)
+    const surveyCandidateIds = new Set(surveyCandidates.map((item) => item.id))
+    if (ids.some((id) => !surveyCandidateIds.has(id))) throw httpError(400, '排序中包含不属于当前问卷的候选项。')
+    const orderedIds = [...ids, ...surveyCandidates.map((item) => item.id).filter((id) => !ids.includes(id))]
+    orderedIds.forEach((id, index) => {
+      const candidate = state.candidates.find((item) => item.id === id)
+      if (candidate) candidate.sortOrder = index * 1000
+    })
+    const ts = now()
+    state.auditLogs.unshift({ id: createId('log'), action: 'candidate.reordered', actor: admin.displayName, detail: `${admin.displayName} 调整了问卷「${survey.title}」的候选项顺序`, surveyId: survey.id, createdAt: ts })
     return normalizeState(state)
   })
 }
@@ -1221,6 +1266,11 @@ const handleApi = async (req, res, pathname) => {
 
   if (pathname === '/api/admin/candidates' && req.method === 'POST') {
     sendJson(res, 200, await createAdminCandidateMutation(req, await readJsonBody(req)))
+    return
+  }
+
+  if (pathname === '/api/admin/candidates/reorder' && req.method === 'POST') {
+    sendJson(res, 200, await reorderAdminCandidatesMutation(req, await readJsonBody(req)))
     return
   }
 

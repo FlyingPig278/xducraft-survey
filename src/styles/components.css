@@ -69,10 +69,22 @@
 }
 
 .candidate-card-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.candidate-card-title-main {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.candidate-card-category {
+  flex: 0 0 auto;
 }
 
 .candidate-intro {
@@ -94,7 +106,8 @@
   align-items: center;
   flex: 0 0 auto;
   gap: 2px;
-  margin-left: -2px;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .candidate-icon-btn {
@@ -437,5 +450,55 @@
 
   .candidate-card {
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .candidate-card {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .candidate-card-check {
+    width: 23px;
+    height: 23px;
+  }
+
+  .candidate-card-title-row {
+    gap: 4px;
+  }
+
+  .candidate-card-title {
+    font-size: 15px;
+  }
+
+  .candidate-card-category {
+    display: none;
+  }
+
+  .candidate-icon-btn {
+    width: 21px;
+    height: 21px;
+    border-radius: 6px;
+  }
+
+  .candidate-card-actions {
+    gap: 1px;
+  }
+
+  .candidate-card-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .candidate-card-count {
+    min-width: 40px;
+    gap: 2px;
+  }
+
+  .candidate-card-count strong {
+    font-size: 18px;
   }
 }

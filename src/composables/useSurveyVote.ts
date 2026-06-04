@@ -19,7 +19,11 @@ export function useSurveyVote() {
 
   const surveyCandidates = computed(() => appState.value.candidates.filter((c) => c.surveyId === survey.value.id))
   const surveyVotes = computed(() => appState.value.votes.filter((v) => v.surveyId === survey.value.id))
-  const approvedCandidates = computed(() => surveyCandidates.value.filter((c) => c.status === 'approved'))
+  const candidateSortOrder = (candidate: Candidate) => Number.isFinite(candidate.sortOrder) ? candidate.sortOrder : Number.MAX_SAFE_INTEGER
+  const approvedCandidates = computed(() => surveyCandidates.value
+    .filter((c) => c.status === 'approved')
+    .sort((a, b) => candidateSortOrder(a) - candidateSortOrder(b) || a.createdAt.localeCompare(b.createdAt))
+  )
   const approvedCandidateIds = computed(() => new Set(approvedCandidates.value.map((c) => c.id)))
   const voteLimit = computed(() => survey.value.voteMode === 'single' ? 1 : Math.max(1, survey.value.maxVotes || 1))
 

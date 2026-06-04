@@ -21,9 +21,17 @@ export function useAdminCandidates() {
 
   const pendingCandidateCount = computed(() => appState.value.candidates.filter((c) => c.status === 'pending').length)
 
+  const candidateSortOrder = (candidate: Candidate) => Number.isFinite(candidate.sortOrder) ? candidate.sortOrder : Number.MAX_SAFE_INTEGER
+  const sortCandidates = (rows: Candidate[]) => [...rows].sort((a, b) =>
+    surveyTitleByCandidate(a).localeCompare(surveyTitleByCandidate(b)) ||
+    candidateSortOrder(a) - candidateSortOrder(b) ||
+    a.createdAt.localeCompare(b.createdAt)
+  )
+  const surveyTitleByCandidate = (candidate: Candidate) => surveyById(candidate.surveyId)?.title ?? ''
+
   const adminCandidateRows = computed(() => {
     const rows = candidateFilter.value === 'all' ? appState.value.candidates : appState.value.candidates.filter((c) => c.status === candidateFilter.value)
-    return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return sortCandidates(rows)
   })
 
   const editingCandidate = computed(() => appState.value.candidates.find((c) => c.id === editingCandidateId.value) ?? null)
@@ -130,6 +138,41 @@ export function useAdminCandidates() {
     message.success(`「${candidate.title}」已标记为${statusLabel(status)}`)
   }
 
+  const orderedCandidatesForSurvey = (surveyId: string) => sortCandidates(appState.value.candidates.filter((candidate) => candidate.surveyId === surveyId))
+  const orderedCandidatesForMove = (candidate: Candidate) => {
+    const rows = orderedCandidatesForSurvey(candidate.surveyId)
+    if (candidateFilter.value === 'all') return rows
+    return rows.filter((item) => item.status === candidateFilter.value)
+  }
+
+  const canMoveCandidate = (candidate: Candidate, offset: number) => {
+    const rows = orderedCandidatesForMove(candidate)
+    const index = rows.findIndex((item) => item.id === candidate.id)
+    const next = index + offset
+    return index >= 0 && next >= 0 && next < rows.length
+  }
+
+  const moveCandidate = async (candidate: Candidate, offset: number) => {
+    if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+    const rows = orderedCandidatesForMove(candidate)
+    const index = rows.findIndex((item) => item.id === candidate.id)
+    const next = index + offset
+    if (index < 0 || next < 0 || next >= rows.length) return
+    const nextRows = [...rows]
+    const [item] = nextRows.splice(index, 1)
+    nextRows.splice(next, 0, item)
+    try {
+      applyRemoteState(await surveyApi.reorderAdminCandidates({
+        surveyId: candidate.surveyId,
+        candidateIds: nextRows.map((item) => item.id)
+      }), candidate.surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '候选项排序保存失败')
+      return
+    }
+    message.success('候选项顺序已更新')
+  }
+
   return {
     candidateFilter,
     reviewNotes,
@@ -147,6 +190,8 @@ export function useAdminCandidates() {
     createAdminCandidate,
     openEditCandidate,
     saveCandidateEdit,
-    setCandidateStatus
+    setCandidateStatus,
+    canMoveCandidate,
+    moveCandidate
   }
 }

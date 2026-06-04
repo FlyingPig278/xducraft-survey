@@ -111,6 +111,8 @@ export const surveyApi = {
     request<AppState>('/api/admin/candidates', { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminCandidate: (candidateId: string, payload: { fields?: Record<string, string>; status?: CandidateStatus; reviewNote?: string }) =>
     request<AppState>(`/api/admin/candidates/${encodeURIComponent(candidateId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  reorderAdminCandidates: (payload: { surveyId: string; candidateIds: string[] }) =>
+    request<AppState>('/api/admin/candidates/reorder', { method: 'POST', body: JSON.stringify(payload) }),
   blessingAuthStatus: () => request<BlessingAuthStatus>('/api/auth/blessing/status'),
   blessingLoginUrl: (returnTo: string, role: UserRole = 'player') => {
     const params = new URLSearchParams({ returnTo, role })

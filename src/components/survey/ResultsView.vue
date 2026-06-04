@@ -49,22 +49,24 @@ const rankClass = (idx: number) => {
           <span :class="rankClass(idx)">{{ idx + 1 }}</span>
           <div style="min-width: 0; flex: 1">
             <div class="candidate-card-title-row">
-              <div class="result-item-title">{{ row.candidate.title }}</div>
-              <n-popover v-if="candidateIntro(row.candidate)" trigger="hover" placement="top" style="max-width: 320px">
-                <template #trigger>
-                  <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
-                    <Info :size="15" :stroke-width="2" aria-hidden="true" />
-                  </button>
-                </template>
-                <div class="candidate-intro">{{ candidateIntro(row.candidate) }}</div>
-              </n-popover>
-              <span v-if="candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" class="candidate-card-actions">
+              <div class="candidate-card-title-main">
+                <div class="result-item-title">{{ row.candidate.title }}</div>
+              </div>
+              <span v-if="candidateIntro(row.candidate) || candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" class="candidate-card-actions">
+                <n-popover v-if="candidateIntro(row.candidate)" trigger="hover" placement="top" style="max-width: 320px">
+                  <template #trigger>
+                    <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
+                      <Info :size="15" :stroke-width="2" aria-hidden="true" />
+                    </button>
+                  </template>
+                  <div class="candidate-intro">{{ candidateIntro(row.candidate) }}</div>
+                </n-popover>
                 <button v-if="candidatePackUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click="openExternal(candidatePackUrl(row.candidate))">
                   <Download :size="15" :stroke-width="2" aria-hidden="true" />
                 </button>
                 <button v-if="candidateVideoUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click="openExternal(candidateVideoUrl(row.candidate))">
                   <CirclePlay :size="15" :stroke-width="2" aria-hidden="true" />
-                </button>
+                  </button>
               </span>
             </div>
             <div class="result-item-meta">{{ candidateMetaFor(row.candidate) || '未填写补充信息' }}</div>

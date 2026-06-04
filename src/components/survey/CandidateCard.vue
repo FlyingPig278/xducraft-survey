@@ -34,17 +34,19 @@ const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,nor
     <div class="candidate-card-check" :class="{ active: selected }"></div>
     <div class="candidate-card-body">
       <div class="candidate-card-title-row">
-        <div class="candidate-card-title">{{ candidate.title }}</div>
-        <n-tag v-if="category" size="tiny" :bordered="false" round style="font-size: 11px">{{ category }}</n-tag>
-        <n-popover v-if="intro" trigger="hover" placement="top" style="max-width: 320px">
-          <template #trigger>
-            <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
-              <Info :size="15" :stroke-width="2" aria-hidden="true" />
-            </button>
-          </template>
-          <div class="candidate-intro">{{ intro }}</div>
-        </n-popover>
-        <span v-if="packUrl || videoUrl" class="candidate-card-actions">
+        <div class="candidate-card-title-main">
+          <div class="candidate-card-title">{{ candidate.title }}</div>
+          <n-tag v-if="category" class="candidate-card-category" size="tiny" :bordered="false" round style="font-size: 11px">{{ category }}</n-tag>
+        </div>
+        <span v-if="intro || packUrl || videoUrl" class="candidate-card-actions">
+          <n-popover v-if="intro" trigger="hover" placement="top" style="max-width: 320px">
+            <template #trigger>
+              <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
+                <Info :size="15" :stroke-width="2" aria-hidden="true" />
+              </button>
+            </template>
+            <div class="candidate-intro">{{ intro }}</div>
+          </n-popover>
           <button v-if="packUrl" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(packUrl)">
             <Download :size="15" :stroke-width="2" aria-hidden="true" />
           </button>

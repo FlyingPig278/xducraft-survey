@@ -4,7 +4,7 @@ import {
   NCard, NForm, NFormItem, NInput, NSelect, NSpace, NButton,
   NAlert, NTag, NEmpty, NModal
 } from 'naive-ui'
-import { Check, X, Undo2, Pencil } from '../../icons'
+import { Check, X, Undo2, Pencil, ChevronUp, ChevronDown } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminCandidates } from '../../composables/useAdminCandidates'
 import { useCandidateFields, fieldSelectOptions, statusLabel, statusTagType, formatDate } from '../../composables/useCandidateFields'
@@ -15,7 +15,8 @@ const {
   editCandidateValues, editCandidateModalOpen,
   adminCandidateRows, editingCandidate, editingCandidateSurvey, editingCandidateFields,
   initAdminCandidateValues, resetAdminCandidateValues,
-  createAdminCandidate, openEditCandidate, saveCandidateEdit, setCandidateStatus
+  createAdminCandidate, openEditCandidate, saveCandidateEdit, setCandidateStatus,
+  canMoveCandidate, moveCandidate
 } = useAdminCandidates()
 const { candidateReviewFields } = useCandidateFields(surveyById)
 
@@ -105,6 +106,14 @@ const hasSurveys = computed(() => surveys.value.length > 0)
         <n-input v-model:value="reviewNotes[c.id]" type="textarea" :rows="2" :placeholder="c.reviewNote || '审核备注'" />
       </n-form-item>
       <n-space :size="8">
+        <n-button size="small" :disabled="!canMoveCandidate(c, -1)" @click="moveCandidate(c, -1)">
+          <template #icon><ChevronUp :size="14" /></template>
+          上移
+        </n-button>
+        <n-button size="small" :disabled="!canMoveCandidate(c, 1)" @click="moveCandidate(c, 1)">
+          <template #icon><ChevronDown :size="14" /></template>
+          下移
+        </n-button>
         <n-button size="small" @click="openEditCandidate(c)">
           <template #icon><Pencil :size="14" /></template>
           编辑

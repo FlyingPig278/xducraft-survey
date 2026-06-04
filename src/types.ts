@@ -47,6 +47,7 @@ export interface Candidate {
   surveyId: string
   title: string
   status: CandidateStatus
+  sortOrder: number
   fields: Record<string, string>
   submitterUserId: string
   submitterName: string
