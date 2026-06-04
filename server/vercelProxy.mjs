@@ -40,6 +40,15 @@ const readBody = async (req) => {
 const buildTargetUrl = (req, upstream) => {
   const incoming = new URL(req.url || '/', `https://${req.headers.host || 'localhost'}`)
   const upstreamPath = upstream.pathname.replace(/\/+$/, '')
+  const rewrittenPath = incoming.searchParams.get('path')
+  if (rewrittenPath !== null) {
+    incoming.searchParams.delete('path')
+    const suffix = rewrittenPath
+      .split('/')
+      .map((part) => encodeURIComponent(decodeURIComponent(part)))
+      .join('/')
+    return new URL(`${upstreamPath}/api/${suffix}${incoming.search}`, upstream.origin)
+  }
   return new URL(`${upstreamPath}${incoming.pathname}${incoming.search}`, upstream.origin)
 }
 
