@@ -2,9 +2,9 @@
 import { computed } from 'vue'
 import {
   NCard, NForm, NFormItem, NInput, NSelect, NSpace, NButton,
-  NAlert, NTag, NEmpty, NModal
+  NAlert, NTag, NEmpty, NModal, NPopconfirm
 } from 'naive-ui'
-import { Check, X, Undo2, Pencil, ChevronUp, ChevronDown } from '../../icons'
+import { Check, X, Undo2, Pencil, ChevronUp, ChevronDown, Trash2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminCandidates } from '../../composables/useAdminCandidates'
 import { useCandidateFields, fieldSelectOptions, statusLabel, statusTagType, formatDate } from '../../composables/useCandidateFields'
@@ -16,7 +16,7 @@ const {
   adminCandidateRows, editingCandidate, editingCandidateSurvey, editingCandidateFields,
   initAdminCandidateValues, resetAdminCandidateValues,
   createAdminCandidate, openEditCandidate, saveCandidateEdit, setCandidateStatus,
-  canMoveCandidate, moveCandidate
+  deleteCandidate, canMoveCandidate, moveCandidate
 } = useAdminCandidates()
 const { candidateReviewFields } = useCandidateFields(surveyById)
 
@@ -130,6 +130,19 @@ const hasSurveys = computed(() => surveys.value.length > 0)
           <template #icon><X :size="14" /></template>
           拒绝
         </n-button>
+        <n-popconfirm
+          positive-text="删除"
+          negative-text="取消"
+          @positive-click="deleteCandidate(c)"
+        >
+          <template #trigger>
+            <n-button type="error" size="small" secondary>
+              <template #icon><Trash2 :size="14" /></template>
+              删除
+            </n-button>
+          </template>
+          删除后会移除该候选项，并清理投票记录中对它的选择。
+        </n-popconfirm>
       </n-space>
     </div>
   </n-space>

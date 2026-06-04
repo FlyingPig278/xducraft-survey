@@ -2,6 +2,7 @@
 import { NPopover, NProgress, NTag } from 'naive-ui'
 import { Info, Download, CirclePlay } from '../../icons'
 import type { Candidate } from '../../types'
+import MarkdownGuide from '../common/MarkdownGuide.vue'
 
 defineProps<{
   candidate: Candidate
@@ -45,7 +46,9 @@ const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,nor
                 <Info :size="15" :stroke-width="2" aria-hidden="true" />
               </button>
             </template>
-            <div class="candidate-intro">{{ intro }}</div>
+            <div class="candidate-intro">
+              <MarkdownGuide :source="intro" />
+            </div>
           </n-popover>
           <button v-if="packUrl" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(packUrl)">
             <Download :size="15" :stroke-width="2" aria-hidden="true" />

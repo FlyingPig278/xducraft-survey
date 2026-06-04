@@ -1032,6 +1032,36 @@ const updateAdminCandidateMutation = async (req, candidateId, body) => {
   })
 }
 
+const deleteAdminCandidateMutation = async (req, candidateId) => {
+  const admin = requireAdmin(req)
+  return updateState((state) => {
+    const candidate = state.candidates.find((item) => item.id === candidateId)
+    if (!candidate) throw httpError(404, '候选项不存在。')
+    const survey = state.surveys.find((item) => item.id === candidate.surveyId)
+    if (!survey) throw httpError(404, '候选项所属问卷不存在。')
+    state.candidates = state.candidates.filter((item) => item.id !== candidateId)
+    state.votes = state.votes
+      .map((vote) => ({
+        ...vote,
+        candidateIds: (Array.isArray(vote.candidateIds) ? vote.candidateIds : []).filter((id) => id !== candidateId),
+        history: (vote.history ?? []).map((item) => ({
+          ...item,
+          candidateIds: (Array.isArray(item.candidateIds) ? item.candidateIds : []).filter((id) => id !== candidateId)
+        }))
+      }))
+      .filter((vote) => vote.surveyId !== candidate.surveyId || vote.candidateIds.length > 0)
+    state.auditLogs.unshift({
+      id: createId('log'),
+      action: 'candidate.deleted',
+      actor: admin.displayName,
+      detail: `${admin.displayName} 删除了问卷「${survey.title}」的候选项「${candidate.title}」`,
+      surveyId: candidate.surveyId,
+      createdAt: now()
+    })
+    return normalizeState(state)
+  })
+}
+
 const reorderAdminCandidatesMutation = async (req, body) => {
   const admin = requireAdmin(req)
   return updateState((state) => {
@@ -1277,6 +1307,11 @@ const handleApi = async (req, res, pathname) => {
   const candidateMatch = pathname.match(/^\/api\/admin\/candidates\/([^/]+)$/)
   if (candidateMatch && req.method === 'PATCH') {
     sendJson(res, 200, await updateAdminCandidateMutation(req, decodeURIComponent(candidateMatch[1]), await readJsonBody(req)))
+    return
+  }
+
+  if (candidateMatch && req.method === 'DELETE') {
+    sendJson(res, 200, await deleteAdminCandidateMutation(req, decodeURIComponent(candidateMatch[1])))
     return
   }
 

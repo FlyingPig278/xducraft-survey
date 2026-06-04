@@ -138,6 +138,22 @@ export function useAdminCandidates() {
     message.success(`「${candidate.title}」已标记为${statusLabel(status)}`)
   }
 
+  const deleteCandidate = async (candidate: Candidate) => {
+    if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
+    try {
+      applyRemoteState(await surveyApi.deleteAdminCandidate(candidate.id), candidate.surveyId)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '候选项删除失败')
+      return
+    }
+    if (editingCandidateId.value === candidate.id) {
+      editCandidateModalOpen.value = false
+      editingCandidateId.value = ''
+    }
+    delete reviewNotes.value[candidate.id]
+    message.success(`候选项「${candidate.title}」已删除`)
+  }
+
   const orderedCandidatesForSurvey = (surveyId: string) => sortCandidates(appState.value.candidates.filter((candidate) => candidate.surveyId === surveyId))
   const orderedCandidatesForMove = (candidate: Candidate) => {
     const rows = orderedCandidatesForSurvey(candidate.surveyId)
@@ -191,6 +207,7 @@ export function useAdminCandidates() {
     openEditCandidate,
     saveCandidateEdit,
     setCandidateStatus,
+    deleteCandidate,
     canMoveCandidate,
     moveCandidate
   }
