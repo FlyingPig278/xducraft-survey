@@ -67,6 +67,7 @@ const blessingProxyUrl = process.env.BLESSING_PROXY_URL || ''
 const blessingDebugProfile = process.env.BLESSING_DEBUG_PROFILE === 'true'
 const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
 const sessionTtlMs = Math.max(3600, Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14)) * 1000
+const proxySecret = process.env.XDUCRAFT_PROXY_SECRET || ''
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
@@ -1077,6 +1078,16 @@ const handleApi = async (req, res, pathname) => {
   if (pathname === '/api/health' && req.method === 'GET') {
     sendJson(res, 200, { ok: true })
     return
+  }
+
+  if (proxySecret) {
+    const value = Array.isArray(req.headers['x-xducraft-proxy-secret'])
+      ? req.headers['x-xducraft-proxy-secret'][0]
+      : req.headers['x-xducraft-proxy-secret']
+    if (!value || !safeEqual(value, proxySecret)) {
+      sendJson(res, 403, { error: '后端 API 只接受受信任代理访问。' })
+      return
+    }
   }
 
   if (pathname === '/api/auth/blessing/status' && req.method === 'GET') {
