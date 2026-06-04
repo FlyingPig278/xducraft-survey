@@ -26,6 +26,12 @@ const resultVisibilityOptions = [
   { label: '投票后显示', value: 'after_vote' },
   { label: '不对玩家显示', value: 'hidden' }
 ]
+const guideTextPlaceholder = [
+  '普通段落会保留换行。',
+  '',
+  '> [!WARNING]',
+  '> 这里可以写注意事项。'
+].join('\n')
 
 const wallpaperOptions: Array<{ label: string; value: WallpaperKey; desktop: string; mobile: string }> = [
   {
@@ -212,8 +218,14 @@ const downloadPoster = async () => {
       <n-form-item label="说明">
         <n-input v-model:value="surveySettingsDraft.description" type="textarea" :rows="2" />
       </n-form-item>
-      <n-form-item label="答题指引">
-        <n-input v-model:value="surveySettingsDraft.guideText" type="textarea" :rows="2" />
+      <n-form-item label="答题指引（支持 Markdown）">
+        <n-input
+          v-model:value="surveySettingsDraft.guideText"
+          type="textarea"
+          :rows="6"
+          :autosize="{ minRows: 5, maxRows: 12 }"
+          :placeholder="guideTextPlaceholder"
+        />
       </n-form-item>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
         <n-form-item label="模式">

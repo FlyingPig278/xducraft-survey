@@ -14,6 +14,7 @@ import ResultsView from './ResultsView.vue'
 import VoteConfirmModal from './VoteConfirmModal.vue'
 import CandidateSubmitModal from './CandidateSubmitModal.vue'
 import GuestNameModal from './GuestNameModal.vue'
+import MarkdownGuide from '../common/MarkdownGuide.vue'
 
 const { survey, apiLoading, apiError, surveyById } = useAppState()
 const { currentUser, guestDraft, isAdmin, startOAuthLogin, logout } = useAuth()
@@ -115,7 +116,7 @@ const openAdminPanel = () => { navigateAdmin('surveys') }
           {{ surveyAvailability.message }}
         </n-alert>
 
-        <p style="color: #64748b; margin: 0 0 10px; line-height: 1.6">{{ surveyGuideText }}</p>
+        <MarkdownGuide :source="surveyGuideText" />
         <div v-if="surveyRuleHints.length" class="survey-rule-hints">
           <span v-for="hint in surveyRuleHints" :key="hint">{{ hint }}</span>
         </div>

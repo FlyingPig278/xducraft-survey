@@ -44,6 +44,60 @@
   line-height: 1.4;
 }
 
+.markdown-guide {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.markdown-guide-paragraph,
+.markdown-guide-callout-body {
+  margin: 0;
+}
+
+.markdown-guide strong {
+  color: #334155;
+  font-weight: 700;
+}
+
+.markdown-guide a {
+  color: #4f46e5;
+  text-decoration: none;
+}
+
+.markdown-guide a:hover {
+  text-decoration: underline;
+}
+
+.markdown-guide-callout {
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #475569;
+}
+
+.markdown-guide-callout.tone-tip {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.markdown-guide-callout.tone-warning {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.markdown-guide-callout-title {
+  margin-bottom: 4px;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .submit-footer {
   display: flex;
   align-items: center;

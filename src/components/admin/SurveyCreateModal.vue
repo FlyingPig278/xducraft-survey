@@ -10,6 +10,12 @@ const resultVisibilityOptions = [
   { label: '投票后显示', value: 'after_vote' },
   { label: '不对玩家显示', value: 'hidden' }
 ]
+const guideTextPlaceholder = [
+  '普通段落会保留换行。',
+  '',
+  '> [!WARNING]',
+  '> 这里可以写注意事项。'
+].join('\n')
 </script>
 
 <template>
@@ -27,8 +33,14 @@ const resultVisibilityOptions = [
       <n-form-item label="说明">
         <n-input v-model:value="surveyDraft.description" type="textarea" :rows="2" placeholder="请选择你愿意参与的服务器方案。" />
       </n-form-item>
-      <n-form-item label="答题指引">
-        <n-input v-model:value="surveyDraft.guideText" type="textarea" :rows="2" />
+      <n-form-item label="答题指引（支持 Markdown）">
+        <n-input
+          v-model:value="surveyDraft.guideText"
+          type="textarea"
+          :rows="5"
+          :autosize="{ minRows: 4, maxRows: 10 }"
+          :placeholder="guideTextPlaceholder"
+        />
       </n-form-item>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
         <n-form-item label="开始时间">
