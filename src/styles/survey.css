@@ -51,6 +51,7 @@
   color: #64748b;
   font-size: 14px;
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .markdown-guide-paragraph,
@@ -66,6 +67,7 @@
 .markdown-guide a {
   color: #4f46e5;
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .markdown-guide a:hover {

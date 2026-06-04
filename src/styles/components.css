@@ -43,13 +43,14 @@
 .candidate-card-check.active::after {
   content: "";
   position: absolute;
-  left: 7px;
-  top: 3px;
+  left: 50%;
+  top: 45%;
   width: 6px;
-  height: 12px;
+  height: 11px;
   border: solid #fff;
   border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  transform: translate(-50%, -50%) rotate(45deg);
+  transform-origin: center;
 }
 
 .candidate-card-body {
@@ -88,10 +89,12 @@
 }
 
 .candidate-intro {
+  width: min(320px, calc(100vw - 24px));
   max-width: 320px;
   color: #334155;
   font-size: 13px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .candidate-intro .markdown-guide {
@@ -99,6 +102,8 @@
   gap: 8px;
   font-size: 13px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .candidate-intro .markdown-guide-callout {
