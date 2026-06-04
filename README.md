@@ -51,27 +51,29 @@ npm run dev
 
 ## 环境变量
 
-常用配置见 `.env.example`。
+本地开发配置见 `.env.example`。
+
+生产部署时建议分别看：
+
+- `.env.vercel.example`：填到 Vercel 项目的 Environment Variables。
+- `.env.backend.example`：复制到家里 API 服务器的 `.env`。
 
 关键项：
 
 ```bash
-PORT=8787
-FRONTEND_BASE_URL=http://localhost:5173
-XDUCRAFT_DATA_DIR=./data
-SESSION_SECRET=replace-with-a-long-random-string
-SESSION_TTL_SECONDS=1209600
-XDUCRAFT_PROXY_SECRET=
-
-BLESSING_BASE_URL=https://skin.example.edu
-BLESSING_CLIENT_ID=
-BLESSING_CLIENT_SECRET=
-BLESSING_REDIRECT_URI=http://localhost:8787/api/auth/blessing/callback
-BLESSING_OAUTH_SCOPE=User.Read Player.Read
-BLESSING_ADMIN_IDS=
-
+# Vercel
 VITE_API_BASE_URL=
-XDUCRAFT_UPSTREAM_API=
+XDUCRAFT_UPSTREAM_API=https://vote-api.example.com:8443
+XDUCRAFT_PROXY_SECRET=换成随机长字符串
+
+# 家里 API
+FRONTEND_BASE_URL=https://vote.example.com
+BLESSING_BASE_URL=https://skin.example.com
+BLESSING_REDIRECT_URI=https://vote.example.com/api/auth/blessing/callback
+BLESSING_CLIENT_ID=皮肤站应用给出的 client id
+BLESSING_CLIENT_SECRET=皮肤站应用给出的 secret
+BLESSING_ADMIN_IDS=你的皮肤站 uid 或邮箱或昵称
+XDUCRAFT_PROXY_SECRET=和 Vercel 一致的随机长字符串
 ```
 
 说明：
@@ -83,6 +85,7 @@ XDUCRAFT_UPSTREAM_API=
 - `VITE_API_BASE_URL` 留空时，前端会请求同域名下的 `/api`。
 - `XDUCRAFT_UPSTREAM_API` 只给 Vercel `/api` 代理使用，指向真实后端地址。
 - `XDUCRAFT_PROXY_SECRET` 是可选的代理密钥。后端和 Vercel 填同一个值后，后端会拒绝绕过代理的 API 请求。
+- 皮肤站 OAuth 应用回调地址应填写前端域名下的 `/api/auth/blessing/callback`。
 
 ## 构建与运行
 
@@ -122,8 +125,8 @@ https://你的后端域名/api/auth/blessing/callback
 示例：
 
 ```bash
-FRONTEND_BASE_URL=https://vote.xducraft.cn
-BLESSING_REDIRECT_URI=https://vote.xducraft.cn/api/auth/blessing/callback
+FRONTEND_BASE_URL=https://vote.example.com
+BLESSING_REDIRECT_URI=https://vote.example.com/api/auth/blessing/callback
 ```
 
 ### 推荐给当前条件：Vercel 前端 + Vercel API 代理 + 自托管后端
@@ -131,9 +134,9 @@ BLESSING_REDIRECT_URI=https://vote.xducraft.cn/api/auth/blessing/callback
 如果前端域名走 Vercel，而后端运行在家宽公网 IPv4 上，建议让玩家始终访问同一个前端域名：
 
 ```text
-玩家浏览器 -> https://vote.xducraft.cn
-          -> https://vote.xducraft.cn/api/...
-          -> http://你的公网 IPv4:8787/api/...
+玩家浏览器 -> https://vote.example.com
+          -> https://vote.example.com/api/...
+          -> https://vote-api.example.com:8443/api/...
 ```
 
 这样浏览器只连接 Vercel 的 443 端口，不需要玩家直接访问家宽的 `:8787` 或 `:8443`，也避免 HTTPS 页面请求 HTTP API 的混合内容问题。
@@ -142,45 +145,48 @@ Vercel 环境变量：
 
 ```bash
 VITE_API_BASE_URL=
-XDUCRAFT_UPSTREAM_API=http://你的公网 IPv4:8787
+XDUCRAFT_UPSTREAM_API=https://vote-api.example.com:8443
 XDUCRAFT_PROXY_SECRET=换成和后端一致的随机长字符串
 ```
 
 后端 `.env` 设置：
 
 ```bash
-FRONTEND_BASE_URL=https://vote.xducraft.cn
-BLESSING_REDIRECT_URI=https://vote.xducraft.cn/api/auth/blessing/callback
+FRONTEND_BASE_URL=https://vote.example.com
+BLESSING_BASE_URL=https://skin.example.com
+BLESSING_REDIRECT_URI=https://vote.example.com/api/auth/blessing/callback
 XDUCRAFT_PROXY_SECRET=换成和 Vercel 一致的随机长字符串
 ```
 
 皮肤站 OAuth 应用里的回调地址也填写：
 
 ```text
-https://vote.xducraft.cn/api/auth/blessing/callback
+https://vote.example.com/api/auth/blessing/callback
 ```
 
-如果你愿意开放并配置 `8443`，也可以把 `XDUCRAFT_UPSTREAM_API` 写成：
+如果暂时不想配 HTTPS，也可以把 `XDUCRAFT_UPSTREAM_API` 写成：
 
 ```bash
-XDUCRAFT_UPSTREAM_API=https://api.xducraft.cn:8443
+XDUCRAFT_UPSTREAM_API=http://公网 IPv4 或 DDNS 域名:8787
 ```
 
-但从玩家体验看，仍然建议让玩家只看到 `vote.xducraft.cn`，由 Vercel `/api` 代理转发。
+但这样 Vercel 到家里 API 这一跳不是加密连接，OAuth code 和登录票据会经过公网明文传输。正式上线更建议开放 `8443` 并配置 HTTPS。
+
+后端域名建议使用类似 `vote-api.example.com` 的形式。它和前端投票域名成对出现，语义比 `vote-frontend.example.com` 清楚。如果想更短，也可以用类似 `vapi.example.com` 的形式，但可读性差一些。
 
 ### 可选方案：Vercel 前端 + 浏览器直连后端
 
 这种方式也能用，但需要玩家浏览器直接访问后端域名或端口：
 
 ```bash
-VITE_API_BASE_URL=https://api.xducraft.cn:8443
+VITE_API_BASE_URL=https://vote-api.example.com:8443
 ```
 
 后端 `.env`：
 
 ```bash
-FRONTEND_BASE_URL=https://vote.xducraft.cn
-BLESSING_REDIRECT_URI=https://api.xducraft.cn:8443/api/auth/blessing/callback
+FRONTEND_BASE_URL=https://vote.example.com
+BLESSING_REDIRECT_URI=https://vote-api.example.com:8443/api/auth/blessing/callback
 ```
 
 这会让跨域、证书、非标准端口连通性都落到玩家浏览器侧，除非你已经确认不同网络环境访问 `:8443` 很稳定，否则不作为首选。
