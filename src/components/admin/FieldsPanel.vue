@@ -107,7 +107,12 @@ const openPreview = async () => {
         </n-button>
       </div>
       <n-form-item label="选项（每行一个）" :show-feedback="false" class="field-row-full">
-        <n-input type="textarea" :value="fieldOptions(field).join('\n')" :rows="2" @blur="(e: FocusEvent) => updateFieldOptions(field, (e.target as HTMLTextAreaElement).value)" />
+        <n-input
+          type="textarea"
+          :value="fieldOptions(field).join('\n')"
+          :rows="3"
+          @update:value="(value: string) => updateFieldOptions(field, value)"
+        />
       </n-form-item>
     </div>
 
