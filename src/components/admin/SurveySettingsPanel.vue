@@ -97,24 +97,34 @@ const drawCoverImage = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, wi
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, width, height)
 }
 
-const wrapText = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) => {
-  const words = text.split('')
+const wrappedLines = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) => {
+  const words = text.trim().split('')
+  const lines: string[] = []
   let line = ''
-  let currentY = y
-  let lineCount = 0
   for (const word of words) {
     const testLine = `${line}${word}`
     if (ctx.measureText(testLine).width > maxWidth && line) {
-      ctx.fillText(line, x, currentY)
+      lines.push(line)
       line = word
-      currentY += lineHeight
-      lineCount += 1
-      if (lineCount >= maxLines - 1) break
+      if (lines.length >= maxLines) break
     } else {
       line = testLine
     }
   }
-  if (line && lineCount < maxLines) ctx.fillText(line, x, currentY)
+  if (line && lines.length < maxLines) lines.push(line)
+  if (lines.length === maxLines && words.join('').length > lines.join('').length) {
+    const last = lines[lines.length - 1]
+    let clipped = last
+    while (clipped && ctx.measureText(`${clipped}...`).width > maxWidth) clipped = clipped.slice(0, -1)
+    lines[lines.length - 1] = `${clipped || last.slice(0, 1)}...`
+  }
+  return lines
+}
+
+const drawTextLines = (ctx: CanvasRenderingContext2D, lines: string[], x: number, y: number, lineHeight: number) => {
+  lines.forEach((line, index) => {
+    ctx.fillText(line, x, y + index * lineHeight)
+  })
 }
 
 const downloadPoster = async () => {
@@ -135,34 +145,74 @@ const downloadPoster = async () => {
     drawCoverImage(ctx, bg, width, height)
 
     const gradient = ctx.createLinearGradient(0, 0, width, height)
-    gradient.addColorStop(0, 'rgba(7, 15, 35, 0.78)')
-    gradient.addColorStop(0.58, 'rgba(7, 15, 35, 0.38)')
-    gradient.addColorStop(1, 'rgba(7, 15, 35, 0.78)')
+    gradient.addColorStop(0, 'rgba(7, 15, 35, 0.82)')
+    gradient.addColorStop(0.56, 'rgba(7, 15, 35, 0.28)')
+    gradient.addColorStop(1, 'rgba(7, 15, 35, 0.76)')
     ctx.fillStyle = gradient
     ctx.fillRect(0, 0, width, height)
 
-    ctx.fillStyle = '#ffffff'
     ctx.textBaseline = 'top'
-    ctx.font = `700 ${isMobile ? 72 : 68}px sans-serif`
-    const titleX = isMobile ? 72 : 86
-    const titleY = isMobile ? 92 : 98
-    wrapText(ctx, survey.value.title, titleX, titleY, isMobile ? width - 144 : 760, isMobile ? 88 : 82, 3)
+    ctx.textAlign = 'left'
+    const baseWidth = isMobile ? 340 : 680
+    const scale = width / baseWidth
+    const padding = (isMobile ? 26 : 34) * scale
+    const columnGap = 18 * scale
+    const textGap = 10 * scale
+    const brandSize = 12 * scale
+    const titleSize = (isMobile ? 27 : 34) * scale
+    const descriptionSize = 14 * scale
+    const copyMaxWidth = isMobile ? width - padding * 2 : width - padding * 2 - (132 + 28) * scale - columnGap
+    const titleMaxWidth = Math.min(titleSize * 12, copyMaxWidth)
+    const descriptionMaxWidth = Math.min(descriptionSize * 28, copyMaxWidth)
 
-    ctx.font = `400 ${isMobile ? 30 : 28}px sans-serif`
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.88)'
-    wrapText(ctx, survey.value.description || '扫码参与 XDUCraft 投票', titleX, isMobile ? 360 : 330, isMobile ? width - 144 : 720, isMobile ? 44 : 40, 2)
+    ctx.font = `700 ${titleSize}px sans-serif`
+    const titleLines = wrappedLines(ctx, survey.value.title, titleMaxWidth, 3)
+    ctx.font = `400 ${descriptionSize}px sans-serif`
+    const descriptionLines = wrappedLines(ctx, survey.value.description || '扫码参与问卷投票', descriptionMaxWidth, 2)
+    const brandLineHeight = brandSize * 1.25
+    const titleLineHeight = titleSize * 1.12
+    const descriptionLineHeight = descriptionSize * 1.5
+    const copyHeight = brandLineHeight + textGap + titleLines.length * titleLineHeight + textGap + descriptionLines.length * descriptionLineHeight
+    const copyX = padding
+    const copyY = isMobile ? padding : height - padding - copyHeight
 
-    const qrSize = isMobile ? 330 : 250
-    const qrX = isMobile ? (width - qrSize) / 2 : width - qrSize - 104
-    const qrY = isMobile ? height - qrSize - 150 : height - qrSize - 116
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.78)'
+    ctx.font = `700 ${brandSize}px sans-serif`
+    ctx.fillText('XDUCraft Vote', copyX, copyY)
+
     ctx.fillStyle = '#ffffff'
-    ctx.roundRect(qrX - 24, qrY - 24, qrSize + 48, qrSize + 86, 28)
+    ctx.font = `700 ${titleSize}px sans-serif`
+    drawTextLines(ctx, titleLines, copyX, copyY + brandLineHeight + textGap, titleLineHeight)
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.84)'
+    ctx.font = `400 ${descriptionSize}px sans-serif`
+    drawTextLines(
+      ctx,
+      descriptionLines,
+      copyX,
+      copyY + brandLineHeight + textGap + titleLines.length * titleLineHeight + textGap,
+      descriptionLineHeight
+    )
+
+    const qrSize = 132 * scale
+    const qrPadding = 14 * scale
+    const qrGap = 8 * scale
+    const qrTextSize = 12 * scale
+    const qrTextHeight = qrTextSize * 1.35
+    const qrCardWidth = qrSize + qrPadding * 2
+    const qrCardHeight = qrPadding + qrSize + qrGap + qrTextHeight + qrPadding
+    const qrCardX = isMobile ? (width - qrCardWidth) / 2 : width - padding - qrCardWidth
+    const qrCardY = height - padding - qrCardHeight
+    ctx.fillStyle = '#ffffff'
+    ctx.globalAlpha = 0.96
+    ctx.roundRect(qrCardX, qrCardY, qrCardWidth, qrCardHeight, 14 * scale)
     ctx.fill()
-    ctx.drawImage(qr, qrX, qrY, qrSize, qrSize)
-    ctx.font = `500 ${isMobile ? 30 : 24}px sans-serif`
+    ctx.globalAlpha = 1
+    ctx.drawImage(qr, qrCardX + qrPadding, qrCardY + qrPadding, qrSize, qrSize)
+    ctx.font = `700 ${qrTextSize}px sans-serif`
     ctx.fillStyle = '#0f172a'
     ctx.textAlign = 'center'
-    ctx.fillText('扫码参与投票', qrX + qrSize / 2, qrY + qrSize + 28)
+    ctx.fillText('扫码参与投票', qrCardX + qrCardWidth / 2, qrCardY + qrPadding + qrSize + qrGap)
 
     const link = document.createElement('a')
     link.download = `${survey.value.title}-${isMobile ? '手机海报' : '电脑海报'}.png`

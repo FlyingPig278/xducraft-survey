@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Info, Lightbulb, TriangleAlert } from '../../icons'
 
 type CalloutTone = 'info' | 'tip' | 'warning'
 
@@ -123,6 +124,11 @@ const parseMarkdown = (source: string): MarkdownBlock[] => {
 }
 
 const blocks = computed(() => parseMarkdown(props.source))
+const calloutIconFor = (tone?: CalloutTone) => {
+  if (tone === 'warning') return TriangleAlert
+  if (tone === 'tip') return Lightbulb
+  return Info
+}
 </script>
 
 <template>
@@ -140,7 +146,10 @@ const blocks = computed(() => parseMarkdown(props.source))
       </p>
 
       <aside v-else class="markdown-guide-callout" :class="`tone-${block.tone}`">
-        <div class="markdown-guide-callout-title">{{ block.title }}</div>
+        <div class="markdown-guide-callout-title">
+          <component :is="calloutIconFor(block.tone)" :size="15" :stroke-width="2.2" aria-hidden="true" />
+          <span>{{ block.title }}</span>
+        </div>
         <p class="markdown-guide-callout-body">
           <template v-for="(line, lineIndex) in block.lines" :key="lineIndex">
             <template v-for="(token, tokenIndex) in line" :key="tokenIndex">

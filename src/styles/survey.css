@@ -92,10 +92,25 @@
 }
 
 .markdown-guide-callout-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 4px;
-  color: #1e293b;
-  font-size: 13px;
+  color: #1d4ed8;
+  font-size: 14px;
   font-weight: 700;
+}
+
+.markdown-guide-callout-title svg {
+  flex: 0 0 auto;
+}
+
+.markdown-guide-callout.tone-tip .markdown-guide-callout-title {
+  color: #15803d;
+}
+
+.markdown-guide-callout.tone-warning .markdown-guide-callout-title {
+  color: #b45309;
 }
 
 .submit-footer {

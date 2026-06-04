@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,6 +49,13 @@ const dataDir = process.env.XDUCRAFT_DATA_DIR
   ? path.resolve(process.env.XDUCRAFT_DATA_DIR)
   : path.join(rootDir, 'data')
 const stateFile = path.join(dataDir, 'app-state.json')
+const logDir = process.env.XDUCRAFT_LOG_DIR
+  ? path.resolve(process.env.XDUCRAFT_LOG_DIR)
+  : path.join(dataDir, 'logs')
+const authLogFile = process.env.XDUCRAFT_AUTH_LOG_FILE
+  ? path.resolve(process.env.XDUCRAFT_AUTH_LOG_FILE)
+  : path.join(logDir, 'auth.log')
+const authFileLogEnabled = process.env.XDUCRAFT_AUTH_FILE_LOG !== 'false'
 const port = Number(process.env.PORT || 8787)
 const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '')
 const blessingBaseUrl = (process.env.BLESSING_BASE_URL || '').replace(/\/+$/, '')
@@ -74,11 +81,44 @@ const oauthStateTtlMs = 10 * 60 * 1000
 const authTicketTtlMs = 2 * 60 * 1000
 
 const now = () => new Date().toISOString()
+let authLogQueue = Promise.resolve()
+
+const sanitizeLogValue = (value) => {
+  if (value instanceof Error) return { name: value.name, message: value.message, status: value.status }
+  if (Array.isArray(value)) return value.map(sanitizeLogValue)
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !/^(secret|clientSecret|accessToken|refreshToken|sessionToken|code|authorization|password)$/i.test(key))
+      .map(([key, item]) => [key, sanitizeLogValue(item)]))
+  }
+  return value
+}
+
+const writeAuthLog = (event, fields = {}) => {
+  if (!authFileLogEnabled) return
+  const record = {
+    ts: now(),
+    pid: process.pid,
+    event,
+    ...sanitizeLogValue(fields)
+  }
+  const appendRecord = async () => {
+    try {
+      await mkdir(path.dirname(authLogFile), { recursive: true })
+      await appendFile(authLogFile, `${JSON.stringify(record)}\n`, 'utf8')
+    } catch {
+      // Logging must never break auth flow.
+    }
+  }
+  authLogQueue = authLogQueue.then(appendRecord, appendRecord)
+}
 
 const createId = (prefix) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 const createToken = (prefix) => `${prefix}-${randomBytes(18).toString('base64url')}`
+
+const createTraceId = () => createToken('trace')
 
 const blessingAuthEnabled = () =>
   Boolean(blessingBaseUrl && blessingClientId && blessingClientSecret && blessingRedirectUri)
@@ -305,8 +345,18 @@ const parseRawHttpResponse = (buffer) => {
   return parseJsonPayload(Number(match[1]), match[2] || '', bodyText)
 }
 
-const requestBlessingDirect = (pathname, init = {}) => new Promise((resolve, reject) => {
+const requestBlessingDirect = (pathname, init = {}, trace = {}) => new Promise((resolve, reject) => {
   const { url, body, headers, method } = buildBlessingRequest(pathname, init)
+  const startedAt = Date.now()
+  const baseLog = {
+    traceId: trace.traceId,
+    step: trace.step,
+    attempt: trace.attempt,
+    pathname,
+    method,
+    host: url.host,
+    transport: 'direct'
+  }
   const requestOptions = {
     method,
     headers,
@@ -317,13 +367,25 @@ const requestBlessingDirect = (pathname, init = {}) => new Promise((resolve, rej
   }
 
   const transport = url.protocol === 'http:' ? httpRequest : httpsRequest
+  writeAuthLog('blessing.request.direct.start', { ...baseLog, timeoutMs: blessingFetchTimeoutMs, ipFamily: blessingIpFamily })
   const req = transport(url, requestOptions, (response) => {
+    writeAuthLog('blessing.request.direct.response', {
+      ...baseLog,
+      statusCode: response.statusCode,
+      elapsedMs: Date.now() - startedAt
+    })
     const chunks = []
     response.on('data', (chunk) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
     response.on('end', () => {
       try {
+        writeAuthLog('blessing.request.direct.end', {
+          ...baseLog,
+          statusCode: response.statusCode,
+          bodyBytes: Buffer.concat(chunks).length,
+          elapsedMs: Date.now() - startedAt
+        })
         resolve(parseJsonPayload(
           response.statusCode ?? 0,
           response.statusMessage ?? '',
@@ -336,13 +398,35 @@ const requestBlessingDirect = (pathname, init = {}) => new Promise((resolve, rej
   })
 
   const absoluteTimeout = setTimeout(() => {
+    writeAuthLog('blessing.request.direct.timeout', { ...baseLog, elapsedMs: Date.now() - startedAt })
     req.destroy(createTimeoutError())
   }, blessingFetchTimeoutMs)
+  req.on('socket', (socket) => {
+    writeAuthLog('blessing.request.direct.socket', { ...baseLog, elapsedMs: Date.now() - startedAt })
+    socket.on('lookup', (error, address, family, hostname) => {
+      writeAuthLog('blessing.request.direct.lookup', {
+        ...baseLog,
+        hostname,
+        family,
+        address,
+        error: error ? describeFetchError(error) : '',
+        elapsedMs: Date.now() - startedAt
+      })
+    })
+    socket.on('connect', () => {
+      writeAuthLog('blessing.request.direct.tcp_connect', { ...baseLog, elapsedMs: Date.now() - startedAt })
+    })
+    socket.on('secureConnect', () => {
+      writeAuthLog('blessing.request.direct.tls_secure', { ...baseLog, elapsedMs: Date.now() - startedAt })
+    })
+  })
   req.on('timeout', () => {
+    writeAuthLog('blessing.request.direct.timeout_event', { ...baseLog, elapsedMs: Date.now() - startedAt })
     req.destroy(createTimeoutError())
   })
   req.on('error', (error) => {
     clearTimeout(absoluteTimeout)
+    writeAuthLog('blessing.request.direct.error', { ...baseLog, error: describeFetchError(error), elapsedMs: Date.now() - startedAt })
     reject(error)
   })
   req.on('close', () => {
@@ -352,9 +436,21 @@ const requestBlessingDirect = (pathname, init = {}) => new Promise((resolve, rej
   req.end()
 })
 
-const requestBlessingViaProxy = (pathname, init = {}) => new Promise((resolve, reject) => {
+const requestBlessingViaProxy = (pathname, init = {}, trace = {}) => new Promise((resolve, reject) => {
   const { url, body, headers, method } = buildBlessingRequest(pathname, init)
   const proxy = new URL(blessingProxyUrl)
+  const startedAt = Date.now()
+  const baseLog = {
+    traceId: trace.traceId,
+    step: trace.step,
+    attempt: trace.attempt,
+    pathname,
+    method,
+    host: url.host,
+    proxyHost: proxy.host,
+    transport: 'proxy'
+  }
+  writeAuthLog('blessing.request.proxy.start', { ...baseLog, timeoutMs: blessingFetchTimeoutMs })
   if (url.protocol !== 'https:') {
     reject(new Error('BLESSING_PROXY_URL currently supports HTTPS targets only'))
     return
@@ -376,11 +472,17 @@ const requestBlessingViaProxy = (pathname, init = {}) => new Promise((resolve, r
   let tunnelSocket = null
   const absoluteTimeout = setTimeout(() => {
     const error = createTimeoutError()
+    writeAuthLog('blessing.request.proxy.timeout', { ...baseLog, elapsedMs: Date.now() - startedAt })
     if (tunnelSocket) tunnelSocket.destroy(error)
     else connectReq.destroy(error)
   }, blessingFetchTimeoutMs)
 
   connectReq.on('connect', (proxyRes, socket) => {
+    writeAuthLog('blessing.request.proxy.connect_response', {
+      ...baseLog,
+      statusCode: proxyRes.statusCode,
+      elapsedMs: Date.now() - startedAt
+    })
     if ((proxyRes.statusCode ?? 0) < 200 || (proxyRes.statusCode ?? 0) >= 300) {
       clearTimeout(absoluteTimeout)
       socket.destroy()
@@ -392,6 +494,7 @@ const requestBlessingViaProxy = (pathname, init = {}) => new Promise((resolve, r
 
     tunnelSocket = socket
     const tlsSocket = tlsConnect({ socket, servername: url.hostname }, () => {
+      writeAuthLog('blessing.request.proxy.tls_secure', { ...baseLog, elapsedMs: Date.now() - startedAt })
       tunnelSocket = tlsSocket
       const pathWithQuery = `${url.pathname}${url.search}`
       const requestHeaders = {
@@ -413,6 +516,11 @@ const requestBlessingViaProxy = (pathname, init = {}) => new Promise((resolve, r
     tlsSocket.on('end', () => {
       clearTimeout(absoluteTimeout)
       try {
+        writeAuthLog('blessing.request.proxy.end', {
+          ...baseLog,
+          bodyBytes: Buffer.concat(chunks).length,
+          elapsedMs: Date.now() - startedAt
+        })
         resolve(parseRawHttpResponse(Buffer.concat(chunks)))
       } catch (error) {
         reject(error)
@@ -420,31 +528,56 @@ const requestBlessingViaProxy = (pathname, init = {}) => new Promise((resolve, r
     })
     tlsSocket.on('error', (error) => {
       clearTimeout(absoluteTimeout)
+      writeAuthLog('blessing.request.proxy.error', { ...baseLog, error: describeFetchError(error), elapsedMs: Date.now() - startedAt })
       reject(error)
     })
   })
 
   connectReq.on('timeout', () => {
+    writeAuthLog('blessing.request.proxy.timeout_event', { ...baseLog, elapsedMs: Date.now() - startedAt })
     connectReq.destroy(createTimeoutError())
   })
   connectReq.on('error', (error) => {
     clearTimeout(absoluteTimeout)
+    writeAuthLog('blessing.request.proxy.error', { ...baseLog, error: describeFetchError(error), elapsedMs: Date.now() - startedAt })
     reject(error)
   })
   connectReq.end()
 })
 
-const requestBlessingOnce = (pathname, init = {}) =>
-  blessingProxyUrl ? requestBlessingViaProxy(pathname, init) : requestBlessingDirect(pathname, init)
+const requestBlessingOnce = (pathname, init = {}, trace = {}) =>
+  blessingProxyUrl ? requestBlessingViaProxy(pathname, init, trace) : requestBlessingDirect(pathname, init, trace)
 
 const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
   const retries = Math.max(0, Number(options.retries ?? blessingFetchRetries))
   const attempts = retries + 1
   let lastError = null
+  const traceId = options.traceId
+  const step = options.step ?? pathname
+  const method = init.method ?? 'GET'
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const startedAt = Date.now()
+    writeAuthLog('blessing.fetch.attempt.start', {
+      traceId,
+      step,
+      pathname,
+      method,
+      attempt,
+      attempts,
+      retries,
+      timeoutMs: blessingFetchTimeoutMs
+    })
     try {
-      const body = await requestBlessingOnce(pathname, init)
+      const body = await requestBlessingOnce(pathname, init, { traceId, step, attempt })
+      writeAuthLog('blessing.fetch.attempt.success', {
+        traceId,
+        step,
+        pathname,
+        method,
+        attempt,
+        attempts,
+        elapsedMs: Date.now() - startedAt
+      })
       if (attempt > 1) {
         console.log(`[blessing] ${pathname} succeeded on attempt ${attempt} in ${Date.now() - startedAt}ms`)
       }
@@ -452,6 +585,17 @@ const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
     } catch (error) {
       lastError = error
       const canRetry = attempt < attempts && isTransientBlessingError(error)
+      writeAuthLog('blessing.fetch.attempt.failure', {
+        traceId,
+        step,
+        pathname,
+        method,
+        attempt,
+        attempts,
+        canRetry,
+        error: describeFetchError(error),
+        elapsedMs: Date.now() - startedAt
+      })
       console.warn(`[blessing] ${pathname} attempt ${attempt}/${attempts} failed in ${Date.now() - startedAt}ms: ${describeFetchError(error)}`)
       if (!canRetry) break
       await sleep(250 * attempt)
@@ -460,7 +604,7 @@ const fetchBlessingJson = async (pathname, init = {}, options = {}) => {
   throw lastError
 }
 
-const exchangeBlessingCode = async (code) => {
+const exchangeBlessingCode = async (code, traceId) => {
   const form = new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: blessingClientId,
@@ -472,19 +616,19 @@ const exchangeBlessingCode = async (code) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString()
-  }, { retries: blessingTokenRetries })
+  }, { retries: blessingTokenRetries, traceId, step: 'oauth.token' })
 }
 
-const fetchBlessingUser = async (accessToken) => {
+const fetchBlessingUser = async (accessToken, traceId) => {
   return fetchBlessingJson('/api/user', {
     headers: { Authorization: `Bearer ${accessToken}` }
-  })
+  }, { traceId, step: 'api.user' })
 }
 
-const fetchBlessingPlayers = async (accessToken) => {
+const fetchBlessingPlayers = async (accessToken, traceId) => {
   return fetchBlessingJson('/api/players', {
     headers: { Authorization: `Bearer ${accessToken}` }
-  }, { retries: 0 })
+  }, { retries: 0, traceId, step: 'api.players' })
 }
 
 const firstText = (...values) => {
@@ -512,15 +656,21 @@ const unwrapBlessingProfile = (rawProfile) => {
   return root
 }
 
-const logBlessingProfileShape = (rawProfile, profile, adminKeys) => {
+const logBlessingProfileShape = (rawProfile, profile, adminKeys, traceId) => {
   if (!blessingDebugProfile) return
   const root = asObject(rawProfile)
   console.log('[blessing] profile root keys:', Object.keys(root).join(', ') || '(none)')
   console.log('[blessing] profile user keys:', Object.keys(profile).join(', ') || '(none)')
   console.log('[blessing] admin match keys:', adminKeys.filter(Boolean).join(', ') || '(none)')
+  writeAuthLog('blessing.profile.shape', {
+    traceId,
+    rootKeys: Object.keys(root),
+    profileKeys: Object.keys(profile),
+    adminMatchKeys: adminKeys.filter(Boolean)
+  })
 }
 
-const mapBlessingUser = (rawProfile) => {
+const mapBlessingUser = (rawProfile, traceId) => {
   const profile = unwrapBlessingProfile(rawProfile)
   const blessingUserId = firstText(profile.uid, profile.id, profile.user_id, profile.email, profile.nickname, profile.username, createId('blessing-user'))
   const email = firstText(profile.email)
@@ -554,7 +704,7 @@ const mapBlessingUser = (rawProfile) => {
     displayName,
     gameId
   ].map(normalizeUserKey)
-  logBlessingProfileShape(rawProfile, profile, adminKeys)
+  logBlessingProfileShape(rawProfile, profile, adminKeys, traceId)
   const canUseAdmin = adminKeys.some((key) => blessingAdminIds.has(key))
   const normalizedId = blessingUserId.toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9_:-]/g, '-') || createId('user')
   return {
@@ -1182,9 +1332,14 @@ const handleApi = async (req, res, pathname) => {
     cleanupAuthMaps()
     const url = new URL(req.url ?? '/', 'http://localhost')
     const state = createToken('oauth-state')
+    const traceId = createTraceId()
+    const returnTo = safeReturnTo(url.searchParams.get('returnTo') || '/')
+    const role = url.searchParams.get('role') === 'admin' ? 'admin' : 'player'
     oauthStates.set(state, {
-      returnTo: safeReturnTo(url.searchParams.get('returnTo') || '/'),
-      role: url.searchParams.get('role') === 'admin' ? 'admin' : 'player',
+      returnTo,
+      role,
+      traceId,
+      createdAt: Date.now(),
       expiresAt: Date.now() + oauthStateTtlMs
     })
     const authorizeUrl = new URL(blessingUrl('/oauth/authorize'))
@@ -1193,6 +1348,14 @@ const handleApi = async (req, res, pathname) => {
     authorizeUrl.searchParams.set('response_type', 'code')
     authorizeUrl.searchParams.set('scope', blessingOAuthScope)
     authorizeUrl.searchParams.set('state', state)
+    writeAuthLog('oauth.login.redirect', {
+      traceId,
+      role,
+      returnTo,
+      authorizeHost: authorizeUrl.host,
+      redirectUri: blessingRedirectUri,
+      scope: blessingOAuthScope
+    })
     sendRedirect(res, authorizeUrl.toString())
     return
   }
@@ -1203,39 +1366,77 @@ const handleApi = async (req, res, pathname) => {
     const state = url.searchParams.get('state') || ''
     const stateEntry = oauthStates.get(state)
     if (!stateEntry) {
+      writeAuthLog('oauth.callback.invalid_state', { hasState: Boolean(state) })
       redirectToFrontend(res, '/', { auth_error: '登录状态已过期，请重新登录。' })
       return
     }
+    const traceId = stateEntry.traceId || createTraceId()
+    const callbackStartedAt = Date.now()
+    writeAuthLog('oauth.callback.start', {
+      traceId,
+      role: stateEntry.role,
+      returnTo: stateEntry.returnTo,
+      stateAgeMs: stateEntry.createdAt ? Date.now() - stateEntry.createdAt : undefined,
+      hasCode: Boolean(url.searchParams.get('code')),
+      hasError: Boolean(url.searchParams.get('error'))
+    })
     oauthStates.delete(state)
     const error = url.searchParams.get('error')
     if (error) {
+      writeAuthLog('oauth.callback.authorization_error', { traceId, error })
       redirectToFrontend(res, stateEntry.returnTo, { auth_error: `授权失败：${error}` })
       return
     }
     const code = url.searchParams.get('code')
     if (!code) {
+      writeAuthLog('oauth.callback.missing_code', { traceId })
       redirectToFrontend(res, stateEntry.returnTo, { auth_error: '授权回调缺少 code。' })
       return
     }
     try {
-      const token = await exchangeBlessingCode(code)
+      writeAuthLog('oauth.callback.exchange_code.start', { traceId })
+      const token = await exchangeBlessingCode(code, traceId)
+      writeAuthLog('oauth.callback.exchange_code.end', { traceId, elapsedMs: Date.now() - callbackStartedAt })
       const accessToken = token.access_token
       if (!accessToken) throw new Error('XDUCraft 皮肤站未返回 access_token')
-      const profile = await fetchBlessingUser(accessToken)
+      const userFetchStartedAt = Date.now()
+      writeAuthLog('oauth.callback.fetch_user.start', { traceId })
+      const profile = await fetchBlessingUser(accessToken, traceId)
+      writeAuthLog('oauth.callback.fetch_user.end', { traceId, elapsedMs: Date.now() - userFetchStartedAt })
       if (blessingFetchPlayers && !Array.isArray(profile.players)) {
         try {
-          const players = await fetchBlessingPlayers(accessToken)
+          const playersFetchStartedAt = Date.now()
+          writeAuthLog('oauth.callback.fetch_players.start', { traceId })
+          const players = await fetchBlessingPlayers(accessToken, traceId)
           if (Array.isArray(players)) profile.players = players
           else if (Array.isArray(players?.data)) profile.players = players.data
+          writeAuthLog('oauth.callback.fetch_players.end', {
+            traceId,
+            elapsedMs: Date.now() - playersFetchStartedAt,
+            playersCount: Array.isArray(profile.players) ? profile.players.length : 0
+          })
         } catch (error) {
+          writeAuthLog('oauth.callback.fetch_players.skipped', { traceId, error: describeFetchError(error) })
           console.warn(`[blessing] /api/players skipped: ${describeFetchError(error)}`)
         }
       }
-      const user = mapBlessingUser(profile)
+      const user = mapBlessingUser(profile, traceId)
       const ticket = createToken('auth-ticket')
       authTickets.set(ticket, { user, sessionToken: createSessionToken(user), expiresAt: Date.now() + authTicketTtlMs })
+      writeAuthLog('oauth.callback.success', {
+        traceId,
+        role: user.role,
+        userId: user.id,
+        displayName: user.displayName,
+        totalElapsedMs: Date.now() - callbackStartedAt
+      })
       redirectToFrontend(res, stateEntry.returnTo, { auth_ticket: ticket })
     } catch (error) {
+      writeAuthLog('oauth.callback.failure', {
+        traceId,
+        error: describeFetchError(error),
+        totalElapsedMs: Date.now() - callbackStartedAt
+      })
       redirectToFrontend(res, stateEntry.returnTo, {
         auth_error: error instanceof Error ? error.message : 'XDUCraft 皮肤站登录失败'
       })

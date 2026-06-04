@@ -12,6 +12,7 @@ export {
   FileDown,
   GripVertical,
   Info,
+  Lightbulb,
   LogIn,
   LogOut,
   Pencil,
@@ -22,6 +23,7 @@ export {
   Send,
   Settings2,
   Trash2,
+  TriangleAlert,
   Undo2,
   User,
   X
