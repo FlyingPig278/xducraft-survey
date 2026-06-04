@@ -69,8 +69,7 @@
 }
 
 .candidate-card-title-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -79,6 +78,7 @@
 .candidate-card-title-main {
   display: flex;
   align-items: center;
+  flex: 0 1 auto;
   gap: 6px;
   min-width: 0;
 }
@@ -106,8 +106,7 @@
   align-items: center;
   flex: 0 0 auto;
   gap: 2px;
-  justify-content: flex-end;
-  min-width: 0;
+  margin-left: -2px;
 }
 
 .candidate-icon-btn {
