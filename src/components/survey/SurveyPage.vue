@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NResult, NSpace, NTag } from 'naive-ui'
+import '../../styles/survey.css'
 import { LogIn, LogOut, Send, Settings2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAuth } from '../../composables/useAuth'
 import { useRouter } from '../../composables/useRouter'
 import { useSurveyVote } from '../../composables/useSurveyVote'
-import { useAdminSurvey } from '../../composables/useAdminSurvey'
+import { useSurveyGuide } from '../../composables/useSurveyGuide'
 import { useCandidateFields, statusLabel, statusTagType } from '../../composables/useCandidateFields'
 import { formatSurveyWindow, getSurveyAvailability } from '../../composables/useSurveyAvailability'
 import CandidateCard from './CandidateCard.vue'
@@ -26,7 +27,7 @@ const {
   countForCandidate, percentForCandidate,
   toggleCandidate, openVoteConfirm, openCandidateModal
 } = useSurveyVote()
-const { surveyGuideText } = useAdminSurvey()
+const { surveyGuideText } = useSurveyGuide()
 const { candidateMetaFor, candidateIntro, candidatePackUrl, candidateVideoUrl, candidateCategory } = useCandidateFields(surveyById)
 
 const publicSurveyMissing = computed(() =>

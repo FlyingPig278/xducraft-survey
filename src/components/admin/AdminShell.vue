@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { NAlert, NButton, NCard } from 'naive-ui'
+import '../../styles/admin.css'
 import {
   ClipboardList, Settings2, CheckSquare, Archive, GripVertical,
   LogIn, LogOut
@@ -8,6 +10,8 @@ import { useAppState } from '../../composables/useAppState'
 import { useAuth } from '../../composables/useAuth'
 import { useRouter, type AdminPanelKey } from '../../composables/useRouter'
 import { useAdminCandidates } from '../../composables/useAdminCandidates'
+import { useAdminFields } from '../../composables/useAdminFields'
+import { useAdminSurvey } from '../../composables/useAdminSurvey'
 import { publicSurveyUrlFor } from '../../composables/useRouter'
 import SurveyPanel from './SurveyPanel.vue'
 import SurveyCreateModal from './SurveyCreateModal.vue'
@@ -16,10 +20,12 @@ import FieldsPanel from './FieldsPanel.vue'
 import CandidatesPanel from './CandidatesPanel.vue'
 import ArchivePanel from './ArchivePanel.vue'
 
-const { apiLoading, apiError, adminSurveyId } = useAppState()
+const { apiLoading, apiError, adminSurveyId, survey } = useAppState()
 const { currentUser, isAdmin, startOAuthLogin, logout } = useAuth()
 const { adminPanel, navigateAdmin } = useRouter()
-const { pendingCandidateCount } = useAdminCandidates()
+const { pendingCandidateCount, initAdminCandidateValues } = useAdminCandidates()
+const { syncFieldDrafts } = useAdminFields()
+const { syncSurveySettingsDraft } = useAdminSurvey()
 
 const adminPanels: Array<{ key: AdminPanelKey; label: string; icon: any }> = [
   { key: 'surveys', label: '问卷列表', icon: ClipboardList },
@@ -36,6 +42,17 @@ const navigatePanel = (panel: AdminPanelKey) => {
 const openPublicSurvey = () => {
   window.open(publicSurveyUrlFor(adminSurveyId.value), '_blank', 'noopener,noreferrer')
 }
+
+watch(adminSurveyId, () => {
+  syncSurveySettingsDraft()
+  syncFieldDrafts()
+}, { immediate: true })
+
+watch(
+  () => `${survey.value.id}:${survey.value.candidateFields.map((field) => `${field.id}:${field.key}`).join('|')}`,
+  initAdminCandidateValues,
+  { immediate: true }
+)
 </script>
 
 <template>

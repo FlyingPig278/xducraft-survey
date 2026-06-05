@@ -4,10 +4,8 @@ import { createId } from '../storage'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { navigateAdmin } from './useRouter'
+import { DEFAULT_GUIDE_TEXT } from '../constants/surveyDefaults'
 import { surveyApi } from '../api'
-
-export const DEFAULT_GUIDE_TEXT = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选。'
-const LEGACY_GUIDE_TEXT = '请先确认列表中是否已有你想玩的服务器。若没有，请选择列表末尾的自定义项提交候选，审核通过后再投票。'
 
 const defaultCandidateFieldTemplates: Array<Omit<FieldDefinition, 'id'>> = [
   { key: 'packName', label: '整合包名', type: 'text', required: true, placeholder: '例如 All the Mods 10' },
@@ -83,11 +81,6 @@ const settingsSnapshot = (item: SurveyDefinition) => JSON.stringify({
 export function useAdminSurvey() {
   const { survey, appState, applyRemoteState, message, surveys } = useAppState()
   const { isAdmin, currentUser } = useAuth()
-
-  const surveyGuideText = computed(() => {
-    const text = survey.value.guideText?.trim()
-    return !text || text === LEGACY_GUIDE_TEXT ? DEFAULT_GUIDE_TEXT : text
-  })
 
   const surveySettingsDirty = computed(() => settingsSnapshot(survey.value) !== JSON.stringify(surveySettingsDraft))
   const surveyHasVotes = computed(() => appState.value.votes.some((v) => v.surveyId === survey.value.id))
@@ -239,7 +232,6 @@ export function useAdminSurvey() {
     surveySettingsDraft,
     surveyCreateModalOpen,
     surveys,
-    surveyGuideText,
     surveySettingsDirty,
     surveyHasVotes,
     syncSurveySettingsDraft,

@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue'
 import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 import { useAppState } from './composables/useAppState'
 import { useRouter } from './composables/useRouter'
 import { useAuth } from './composables/useAuth'
 import { useSurveyVote } from './composables/useSurveyVote'
-import { useAdminSurvey } from './composables/useAdminSurvey'
-import { useAdminFields } from './composables/useAdminFields'
-import { useAdminCandidates } from './composables/useAdminCandidates'
-import SurveyPage from './components/survey/SurveyPage.vue'
-import AdminShell from './components/admin/AdminShell.vue'
+
+const SurveyPage = defineAsyncComponent(() => import('./components/survey/SurveyPage.vue'))
+const AdminShell = defineAsyncComponent(() => import('./components/admin/AdminShell.vue'))
 
 const { survey, loadAppState, startRemoteSync, stopRemoteSync } = useAppState()
-const { isAdminRoute } = useRouter()
+const { route, isAdminRoute } = useRouter()
 const { currentUser, consumeAuthRedirect } = useAuth()
 const {
   syncSelectionFromVote,
@@ -26,9 +24,13 @@ const {
   candidateModalOpen,
   submissionMessage
 } = useSurveyVote()
-const { syncSurveySettingsDraft } = useAdminSurvey()
-const { syncFieldDrafts } = useAdminFields()
-const { initAdminCandidateValues } = useAdminCandidates()
+
+const resetTransientSurveyUi = () => {
+  submissionMessage.value = ''
+  voteConfirmOpen.value = false
+  candidateModalOpen.value = false
+  editingVote.value = false
+}
 
 onMounted(async () => {
   await consumeAuthRedirect()
@@ -39,16 +41,17 @@ onMounted(async () => {
 onBeforeUnmount(stopRemoteSync)
 
 watch(() => survey.value.id, () => {
-  syncSurveySettingsDraft()
-  syncFieldDrafts()
   initSubmissionValues()
-  initAdminCandidateValues()
   syncSelectionFromVote()
-  submissionMessage.value = ''
-  voteConfirmOpen.value = false
-  candidateModalOpen.value = false
-  editingVote.value = false
+  resetTransientSurveyUi()
 }, { immediate: true })
+
+watch(
+  () => route.value.mode,
+  (mode, previousMode) => {
+    if (mode !== 'survey' || previousMode !== 'survey') resetTransientSurveyUi()
+  }
+)
 
 watch(currentUser, syncSelectionFromVote, { immediate: true })
 
@@ -74,7 +77,7 @@ watch(
 
 watch(
   () => `${survey.value.id}:${survey.value.candidateFields.map((f) => `${f.id}:${f.key}`).join('|')}`,
-  () => { initSubmissionValues(); initAdminCandidateValues() },
+  initSubmissionValues,
   { immediate: true }
 )
 </script>
