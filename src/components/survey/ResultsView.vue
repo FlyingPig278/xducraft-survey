@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NSpace, NProgress, NPopover, NAlert } from 'naive-ui'
-import { Info, Download, CirclePlay } from '../../icons'
+import { NSpace, NProgress, NAlert } from 'naive-ui'
+import { Download, CirclePlay } from '../../icons'
 import type { Candidate } from '../../types'
 import { useAppState } from '../../composables/useAppState'
 import { useSurveyVote } from '../../composables/useSurveyVote'
 import { useCandidateFields } from '../../composables/useCandidateFields'
+import CandidateInfoButton from './CandidateInfoButton.vue'
 
 const { survey, surveyById } = useAppState()
 const { approvedCandidates, totalVoters, candidateCounts } = useSurveyVote()
@@ -53,14 +54,11 @@ const rankClass = (idx: number) => {
                 <div class="result-item-title">{{ row.candidate.title }}</div>
               </div>
               <span v-if="candidateIntro(row.candidate) || candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" class="candidate-card-actions">
-                <n-popover v-if="candidateIntro(row.candidate)" trigger="hover" placement="top" style="max-width: 320px">
-                  <template #trigger>
-                    <button class="candidate-icon-btn" type="button" title="查看介绍" aria-label="查看介绍" @click.stop>
-                      <Info :size="15" :stroke-width="2" aria-hidden="true" />
-                    </button>
-                  </template>
-                  <div class="candidate-intro">{{ candidateIntro(row.candidate) }}</div>
-                </n-popover>
+                <CandidateInfoButton
+                  v-if="candidateIntro(row.candidate)"
+                  :title="row.candidate.title"
+                  :intro="candidateIntro(row.candidate)"
+                />
                 <button v-if="candidatePackUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click="openExternal(candidatePackUrl(row.candidate))">
                   <Download :size="15" :stroke-width="2" aria-hidden="true" />
                 </button>

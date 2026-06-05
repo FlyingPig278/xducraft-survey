@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NPopover, NProgress, NTag } from 'naive-ui'
-import { Info, Download, CirclePlay } from '../../icons'
+import { NProgress, NTag } from 'naive-ui'
+import { Download, CirclePlay } from '../../icons'
 import type { Candidate } from '../../types'
-import MarkdownGuide from '../common/MarkdownGuide.vue'
+import CandidateInfoButton from './CandidateInfoButton.vue'
 
 defineProps<{
   candidate: Candidate
@@ -23,31 +22,7 @@ defineEmits<{
   toggle: []
 }>()
 
-const introPopoverOpen = ref(false)
-const introTriggerRef = ref<HTMLButtonElement | null>(null)
-
 const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }
-
-const setIntroPopoverOpen = (show: boolean) => {
-  introPopoverOpen.value = show
-  if (!show) {
-    void nextTick(() => introTriggerRef.value?.blur())
-  }
-}
-
-const closeIntroPopover = () => {
-  if (introPopoverOpen.value) setIntroPopoverOpen(false)
-}
-
-onMounted(() => {
-  window.addEventListener('scroll', closeIntroPopover, { capture: true, passive: true })
-  window.addEventListener('touchmove', closeIntroPopover, { passive: true })
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('scroll', closeIntroPopover, { capture: true })
-  window.removeEventListener('touchmove', closeIntroPopover)
-})
 </script>
 
 <template>
@@ -65,31 +40,7 @@ onBeforeUnmount(() => {
           <n-tag v-if="category" class="candidate-card-category" size="tiny" :bordered="false" round style="font-size: 11px">{{ category }}</n-tag>
         </div>
         <span v-if="intro || packUrl || videoUrl" class="candidate-card-actions">
-          <n-popover
-            v-if="intro"
-            :show="introPopoverOpen"
-            trigger="click"
-            placement="top"
-            :style="{ maxWidth: 'min(320px, calc(100vw - 24px))' }"
-            @update:show="setIntroPopoverOpen"
-          >
-            <template #trigger>
-              <button
-                ref="introTriggerRef"
-                class="candidate-icon-btn"
-                type="button"
-                title="查看介绍"
-                aria-label="查看介绍"
-                :aria-expanded="introPopoverOpen"
-                @click.stop
-              >
-                <Info :size="15" :stroke-width="2" aria-hidden="true" />
-              </button>
-            </template>
-            <div class="candidate-intro">
-              <MarkdownGuide :source="intro" />
-            </div>
-          </n-popover>
+          <CandidateInfoButton v-if="intro" :title="candidate.title" :intro="intro" />
           <button v-if="packUrl" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(packUrl)">
             <Download :size="15" :stroke-width="2" aria-hidden="true" />
           </button>
