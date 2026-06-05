@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   NCard, NForm, NFormItem, NInput, NSelect, NSpace, NButton,
   NAlert, NTag, NEmpty, NModal, NPopconfirm
 } from 'naive-ui'
-import { Check, X, Undo2, Pencil, ChevronUp, ChevronDown, Trash2 } from '../../icons'
+import { Check, X, Undo2, Pencil, ChevronUp, ChevronDown, Trash2, User } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
 import { useAdminCandidates } from '../../composables/useAdminCandidates'
 import { useCandidateFields, fieldSelectOptions, statusLabel, statusTagType, formatDate } from '../../composables/useCandidateFields'
+import type { Candidate, VoteRecord } from '../../types'
 
-const { survey, adminSurveyId, surveys, surveyById, surveyTitleById } = useAppState()
+interface CandidateVoterRow {
+  id: string
+  userName: string
+  gameId: string
+  recordedAt: string
+}
+
+const { appState, survey, adminSurveyId, surveys, surveyById, surveyTitleById } = useAppState()
 const {
   candidateFilter, reviewNotes, adminCandidateValues,
   editCandidateValues, editCandidateModalOpen,
@@ -22,6 +30,60 @@ const { candidateReviewFields } = useCandidateFields(surveyById)
 
 const surveySelectOptions = computed(() => surveys.value.map((s) => ({ label: s.title, value: s.id })))
 const hasSurveys = computed(() => surveys.value.length > 0)
+const voteDetailModalOpen = ref(false)
+const voteDetailCandidateId = ref('')
+
+const voteDetailCandidate = computed(() =>
+  appState.value.candidates.find((candidate) => candidate.id === voteDetailCandidateId.value) ?? null
+)
+
+const latestTime = (values: string[]) =>
+  values.filter(Boolean).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? ''
+
+const voterRowFor = (vote: VoteRecord, recordedAt: string): CandidateVoterRow => ({
+  id: vote.id,
+  userName: vote.userName || '匿名玩家',
+  gameId: vote.gameId || '未记录游戏昵称',
+  recordedAt
+})
+
+const candidateCurrentVoteCount = (candidateId: string) =>
+  appState.value.votes.filter((vote) => vote.candidateIds.includes(candidateId)).length
+
+const candidateVoteDetail = computed(() => {
+  const candidate = voteDetailCandidate.value
+  if (!candidate) return { current: [] as CandidateVoterRow[], former: [] as CandidateVoterRow[] }
+
+  const current: CandidateVoterRow[] = []
+  const former: CandidateVoterRow[] = []
+  const votes = appState.value.votes.filter((vote) => vote.surveyId === candidate.surveyId)
+
+  votes.forEach((vote) => {
+    const currentSelected = vote.candidateIds.includes(candidate.id)
+    const selectedHistoryTimes = (vote.history ?? [])
+      .filter((snapshot) => snapshot.candidateIds.includes(candidate.id))
+      .map((snapshot) => snapshot.changedAt)
+
+    if (currentSelected) {
+      current.push(voterRowFor(vote, vote.updatedAt || vote.createdAt))
+      return
+    }
+
+    if (selectedHistoryTimes.length > 0) {
+      former.push(voterRowFor(vote, latestTime(selectedHistoryTimes) || vote.updatedAt || vote.createdAt))
+    }
+  })
+
+  const sortByRecordedAt = (rows: CandidateVoterRow[]) =>
+    rows.sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt))
+
+  return { current: sortByRecordedAt(current), former: sortByRecordedAt(former) }
+})
+
+const openVoteDetail = (candidate: Candidate) => {
+  voteDetailCandidateId.value = candidate.id
+  voteDetailModalOpen.value = true
+}
 </script>
 
 <template>
@@ -118,6 +180,10 @@ const hasSurveys = computed(() => surveys.value.length > 0)
           <template #icon><Pencil :size="14" /></template>
           编辑
         </n-button>
+        <n-button size="small" @click="openVoteDetail(c)">
+          <template #icon><User :size="14" /></template>
+          投票明细 {{ candidateCurrentVoteCount(c.id) }}
+        </n-button>
         <n-button v-if="c.status !== 'approved'" type="primary" size="small" @click="setCandidateStatus(c, 'approved')">
           <template #icon><Check :size="14" /></template>
           通过
@@ -146,6 +212,55 @@ const hasSurveys = computed(() => surveys.value.length > 0)
       </n-space>
     </div>
   </n-space>
+
+  <!-- Candidate vote detail modal -->
+  <n-modal
+    v-model:show="voteDetailModalOpen"
+    preset="card"
+    :title="voteDetailCandidate ? `投票明细：${voteDetailCandidate.title}` : '投票明细'"
+    style="width: 760px; max-width: 95vw"
+    :bordered="true"
+  >
+    <template #header-extra>
+      <n-tag v-if="voteDetailCandidate" :bordered="false" size="small">
+        {{ surveyTitleById(voteDetailCandidate.surveyId) }}
+      </n-tag>
+    </template>
+
+    <n-alert v-if="!voteDetailCandidate" type="warning" :bordered="false">
+      候选项不存在或已被移除。
+    </n-alert>
+    <template v-else>
+      <div class="candidate-vote-summary">
+        <n-tag type="success" :bordered="false" round>当前 {{ candidateVoteDetail.current.length }} 人</n-tag>
+        <n-tag type="info" :bordered="false" round>曾经 {{ candidateVoteDetail.former.length }} 人</n-tag>
+      </div>
+
+      <div class="candidate-vote-detail-grid">
+        <n-card size="small" title="当前仍选择">
+          <n-empty v-if="candidateVoteDetail.current.length === 0" description="暂无当前选择者" />
+          <n-space v-else vertical :size="6">
+            <div v-for="row in candidateVoteDetail.current" :key="row.id" class="candidate-voter-row">
+              <strong>{{ row.userName }}</strong>
+              <span>{{ row.gameId }}</span>
+              <small>{{ formatDate(row.recordedAt) }}</small>
+            </div>
+          </n-space>
+        </n-card>
+
+        <n-card size="small" title="曾经选择过">
+          <n-empty v-if="candidateVoteDetail.former.length === 0" description="暂无改票记录" />
+          <n-space v-else vertical :size="6">
+            <div v-for="row in candidateVoteDetail.former" :key="row.id" class="candidate-voter-row">
+              <strong>{{ row.userName }}</strong>
+              <span>{{ row.gameId }}</span>
+              <small>最后记录 {{ formatDate(row.recordedAt) }}</small>
+            </div>
+          </n-space>
+        </n-card>
+      </div>
+    </template>
+  </n-modal>
 
   <!-- Edit candidate modal -->
   <n-modal v-model:show="editCandidateModalOpen" preset="card" title="编辑候选项" style="width: 680px; max-width: 95vw" :bordered="true">

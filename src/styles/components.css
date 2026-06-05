@@ -266,6 +266,53 @@
   word-break: break-all;
 }
 
+.candidate-vote-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.candidate-vote-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.candidate-voter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.candidate-voter-row strong,
+.candidate-voter-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-voter-row strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.candidate-voter-row span,
+.candidate-voter-row small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.candidate-voter-row small {
+  grid-column: 1 / -1;
+}
+
 .share-section {
   display: grid;
   gap: 12px;
@@ -455,7 +502,8 @@
 
 @media (max-width: 900px) {
   .modal-form-grid,
-  .review-card-fields {
+  .review-card-fields,
+  .candidate-vote-detail-grid {
     grid-template-columns: 1fr;
   }
 
