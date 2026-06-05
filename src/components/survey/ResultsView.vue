@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NSpace, NProgress, NAlert } from 'naive-ui'
-import { Download, CirclePlay } from '../../icons'
 import type { Candidate } from '../../types'
 import { useAppState } from '../../composables/useAppState'
 import { useSurveyVote } from '../../composables/useSurveyVote'
@@ -32,8 +31,6 @@ const canViewResults = computed(() =>
   survey.value.resultVisibility === 'always' || survey.value.resultVisibility === 'after_vote'
 )
 
-const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }
-
 const rankClass = (idx: number) => {
   if (idx === 0) return 'result-rank top-1'
   if (idx === 1) return 'result-rank top-2'
@@ -55,16 +52,11 @@ const rankClass = (idx: number) => {
               </div>
               <span v-if="candidateIntro(row.candidate) || candidatePackUrl(row.candidate) || candidateVideoUrl(row.candidate)" class="candidate-card-actions">
                 <CandidateInfoButton
-                  v-if="candidateIntro(row.candidate)"
                   :title="row.candidate.title"
                   :intro="candidateIntro(row.candidate)"
+                  :pack-url="candidatePackUrl(row.candidate)"
+                  :video-url="candidateVideoUrl(row.candidate)"
                 />
-                <button v-if="candidatePackUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click="openExternal(candidatePackUrl(row.candidate))">
-                  <Download :size="15" :stroke-width="2" aria-hidden="true" />
-                </button>
-                <button v-if="candidateVideoUrl(row.candidate)" class="candidate-icon-btn" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click="openExternal(candidateVideoUrl(row.candidate))">
-                  <CirclePlay :size="15" :stroke-width="2" aria-hidden="true" />
-                  </button>
               </span>
             </div>
             <div class="result-item-meta">{{ candidateMetaFor(row.candidate) || '未填写补充信息' }}</div>

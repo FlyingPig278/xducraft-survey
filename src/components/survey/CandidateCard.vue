@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { NProgress, NTag } from 'naive-ui'
-import { Download, CirclePlay } from '../../icons'
 import type { Candidate } from '../../types'
 import CandidateInfoButton from './CandidateInfoButton.vue'
 
@@ -22,7 +21,6 @@ defineEmits<{
   toggle: []
 }>()
 
-const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }
 </script>
 
 <template>
@@ -40,13 +38,7 @@ const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,nor
           <n-tag v-if="category" class="candidate-card-category" size="tiny" :bordered="false" round style="font-size: 11px">{{ category }}</n-tag>
         </div>
         <span v-if="intro || packUrl || videoUrl" class="candidate-card-actions">
-          <CandidateInfoButton v-if="intro" :title="candidate.title" :intro="intro" />
-          <button v-if="packUrl" class="candidate-icon-btn" type="button" title="打开整合包链接" aria-label="打开整合包链接" @click.stop="openExternal(packUrl)">
-            <Download :size="15" :stroke-width="2" aria-hidden="true" />
-          </button>
-          <button v-if="videoUrl" class="candidate-icon-btn" type="button" title="打开宣传视频" aria-label="打开宣传视频" @click.stop="openExternal(videoUrl)">
-            <CirclePlay :size="15" :stroke-width="2" aria-hidden="true" />
-          </button>
+          <CandidateInfoButton :title="candidate.title" :intro="intro" :pack-url="packUrl" :video-url="videoUrl" />
         </span>
       </div>
       <div class="candidate-card-meta">{{ meta || '未填写补充信息' }}</div>

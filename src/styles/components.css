@@ -116,6 +116,10 @@
   font-size: 13px;
 }
 
+.candidate-intro-modal .markdown-guide + .candidate-info-actions {
+  margin-top: 14px;
+}
+
 .candidate-card-meta {
   font-size: 13px;
   color: #64748b;
