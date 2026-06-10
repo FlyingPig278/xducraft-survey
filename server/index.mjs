@@ -56,6 +56,10 @@ const authLogFile = process.env.XDUCRAFT_AUTH_LOG_FILE
   ? path.resolve(process.env.XDUCRAFT_AUTH_LOG_FILE)
   : path.join(logDir, 'auth.log')
 const authFileLogEnabled = process.env.XDUCRAFT_AUTH_FILE_LOG !== 'false'
+const accessLogFile = process.env.XDUCRAFT_ACCESS_LOG_FILE
+  ? path.resolve(process.env.XDUCRAFT_ACCESS_LOG_FILE)
+  : path.join(logDir, 'access.log')
+const accessFileLogEnabled = process.env.XDUCRAFT_ACCESS_FILE_LOG !== 'false'
 const port = Number(process.env.PORT || 8787)
 const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '')
 const blessingBaseUrl = (process.env.BLESSING_BASE_URL || '').replace(/\/+$/, '')
@@ -82,6 +86,7 @@ const authTicketTtlMs = 2 * 60 * 1000
 
 const now = () => new Date().toISOString()
 let authLogQueue = Promise.resolve()
+let accessLogQueue = Promise.resolve()
 
 const sanitizeLogValue = (value) => {
   if (value instanceof Error) return { name: value.name, message: value.message, status: value.status }
@@ -111,6 +116,25 @@ const writeAuthLog = (event, fields = {}) => {
     }
   }
   authLogQueue = authLogQueue.then(appendRecord, appendRecord)
+}
+
+const writeAccessLog = (event, fields = {}) => {
+  if (!accessFileLogEnabled) return
+  const record = {
+    ts: now(),
+    pid: process.pid,
+    event,
+    ...sanitizeLogValue(fields)
+  }
+  const appendRecord = async () => {
+    try {
+      await mkdir(path.dirname(accessLogFile), { recursive: true })
+      await appendFile(accessLogFile, `${JSON.stringify(record)}\n`, 'utf8')
+    } catch {
+      // Diagnostics should never break the API.
+    }
+  }
+  accessLogQueue = accessLogQueue.then(appendRecord, appendRecord)
 }
 
 const createId = (prefix) =>
@@ -1238,7 +1262,8 @@ const sendJson = (res, statusCode, body) => {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id'
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id,X-XDUCraft-Proxy-Trace',
+    'Access-Control-Expose-Headers': 'X-XDUCraft-Api-Trace,X-XDUCraft-Proxy-Trace'
   })
   res.end(JSON.stringify(body))
 }
@@ -1248,10 +1273,34 @@ const sendText = (res, statusCode, body) => {
     'Content-Type': 'text/plain; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id'
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id,X-XDUCraft-Proxy-Trace',
+    'Access-Control-Expose-Headers': 'X-XDUCraft-Api-Trace,X-XDUCraft-Proxy-Trace'
   })
   res.end(body)
 }
+
+const headerValue = (req, name) => {
+  const value = req.headers[name.toLowerCase()]
+  return Array.isArray(value) ? value.join(', ') : String(value || '')
+}
+
+const requestQueryKeysForLog = (req) => {
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  return [...new Set([...url.searchParams.keys()])]
+}
+
+const requestFieldsForLog = (req, pathname) => ({
+  method: req.method,
+  pathname,
+  queryKeys: requestQueryKeysForLog(req),
+  host: headerValue(req, 'host'),
+  forwardedHost: headerValue(req, 'x-forwarded-host'),
+  forwardedFor: headerValue(req, 'x-forwarded-for'),
+  forwardedProto: headerValue(req, 'x-forwarded-proto'),
+  remoteAddress: req.socket.remoteAddress,
+  remotePort: req.socket.remotePort,
+  userAgent: headerValue(req, 'user-agent')
+})
 
 const contentTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -1301,7 +1350,12 @@ const handleApi = async (req, res, pathname) => {
   }
 
   if (pathname === '/api/health' && req.method === 'GET') {
-    sendJson(res, 200, { ok: true })
+    sendJson(res, 200, {
+      ok: true,
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      time: now()
+    })
     return
   }
 
@@ -1520,20 +1574,55 @@ const handleApi = async (req, res, pathname) => {
 }
 
 const server = createServer(async (req, res) => {
+  const startedAt = Date.now()
+  let pathname = '/'
+  let isApiRequest = false
+  let statusForLog = 200
+  let caughtError = null
+  const proxyTrace = headerValue(req, 'x-xducraft-proxy-trace')
+  const traceId = proxyTrace || createTraceId()
+  res.setHeader('x-xducraft-api-trace', traceId)
+  const originalWriteHead = res.writeHead
+  res.writeHead = function patchedWriteHead(statusCode, ...args) {
+    statusForLog = Number(statusCode) || statusForLog
+    return originalWriteHead.call(this, statusCode, ...args)
+  }
+
   try {
-    const { pathname } = new URL(req.url ?? '/', 'http://localhost')
+    const parsedUrl = new URL(req.url ?? '/', 'http://localhost')
+    pathname = parsedUrl.pathname
+    isApiRequest = pathname.startsWith('/api/')
     if (pathname.startsWith('/api/')) {
       await handleApi(req, res, pathname)
       return
     }
     await serveStatic(req, res)
   } catch (error) {
+    caughtError = error
     const status = error instanceof Error && Number(error.status) ? Number(error.status) : 500
-    sendJson(res, status, { error: error instanceof Error ? error.message : 'Internal server error' })
+    statusForLog = status
+    if (res.headersSent) {
+      res.destroy(error instanceof Error ? error : undefined)
+    } else {
+      sendJson(res, status, { error: error instanceof Error ? error.message : 'Internal server error' })
+    }
+  } finally {
+    if (isApiRequest) {
+      writeAccessLog('api.request', {
+        traceId,
+        proxyTrace: proxyTrace || undefined,
+        ...requestFieldsForLog(req, pathname),
+        status: Number(res.statusCode) || statusForLog,
+        elapsedMs: Date.now() - startedAt,
+        error: caughtError ? describeFetchError(caughtError) : undefined
+      })
+    }
   }
 })
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`XDUCraft Survey API listening on http://localhost:${port}`)
   console.log(`Data file: ${stateFile}`)
+  console.log(`Access log: ${accessFileLogEnabled ? accessLogFile : 'disabled'}`)
+  console.log(`Auth log: ${authFileLogEnabled ? authLogFile : 'disabled'}`)
 })

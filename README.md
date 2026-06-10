@@ -224,6 +224,47 @@ data/app-state.json
 - 新项目默认没有问卷，管理员需要先在后台创建问卷。
 - 默认候选项字段模板会在新建问卷时使用。
 
+## 链路诊断
+
+当前推荐链路是：
+
+```text
+玩家浏览器 -> Vercel /api 代理 -> 家里 Nginx Proxy Manager -> Ubuntu Node API
+```
+
+为了定位偶发 `502`，系统会给每个经过 Vercel `/api` 代理的请求生成 `traceId`：
+
+- Vercel 日志中会出现 `proxy.request.start`、`proxy.request.finish`、`proxy.request.failure`。
+- 家里 API 会把访问日志写入 `data/logs/access.log`，字段包括 `traceId`、路径、状态码、耗时、转发来源。
+- 皮肤站 OAuth 细节仍写入 `data/logs/auth.log`。
+
+后端日志实时查看：
+
+```bash
+tail -f data/logs/access.log
+tail -f data/logs/auth.log
+```
+
+如果 Vercel 返回 `502`，按下面顺序判断：
+
+1. Vercel 日志有 `proxy.request.failure`，但 `access.log` 里没有同一个 `traceId`：请求没有到达 Node API，重点检查 Nginx Proxy Manager、局域网 IP、Ubuntu 防火墙、API 进程端口。
+2. Vercel 日志有 `proxy.request.finish`，`status` 是 `502/504`：上游返回了错误或超时，继续看 NPM 错误日志和本地 API 日志。
+3. `access.log` 里有同一个 `traceId`，且 `status` 是 `500`：Node API 内部处理失败，看同一条日志的 `error` 字段。
+4. `access.log` 里完全没有新增记录，但直接访问后端 `/api/health` 正常：通常是 NPM 到 Ubuntu 的内网目标、端口或连接复用出了问题。
+
+Nginx Proxy Manager 侧重点看：
+
+```text
+/data/logs/proxy-host-*_error.log
+```
+
+如果看到 `connect() failed (111: Connection refused) while connecting to upstream`，说明 NPM 已经收到外部请求，但连不上它配置的上游地址，例如 `http://192.168.x.x:8787`。这时优先检查：
+
+- `systemctl status xducraft-survey`
+- `ss -ltnp | grep 8787`
+- NPM 里配置的 Forward Hostname / IP 是否仍是当前 Ubuntu 局域网 IP
+- Ubuntu `ufw` 是否允许 NPM 容器所在设备访问 `8787`
+
 ## 常用命令
 
 ```bash
