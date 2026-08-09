@@ -80,7 +80,8 @@ export function useAppState() {
   const surveyTitleById = (id: string) => surveyById(id)?.title ?? '未知问卷'
 
   const applyRemoteState = (state: AppState, preferredSurveyId = adminSurveyId.value) => {
-    appState.value = state
+    stateRevision.value += 1
+    appState.value = { ...state, results: state.results ?? {} }
     if (preferredSurveyId && state.surveys.some((item) => item.id === preferredSurveyId)) {
       adminSurveyId.value = preferredSurveyId
     } else {

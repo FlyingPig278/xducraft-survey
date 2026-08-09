@@ -24,7 +24,7 @@ const {
   adminCandidateRows, editingCandidate, editingCandidateSurvey, editingCandidateFields,
   initAdminCandidateValues, resetAdminCandidateValues,
   createAdminCandidate, openEditCandidate, saveCandidateEdit, setCandidateStatus,
-  deleteCandidate, canMoveCandidate, moveCandidate
+  deleteCandidate, candidateHasVoteRecords, canMoveCandidate, moveCandidate
 } = useAdminCandidates()
 const { candidateReviewFields } = useCandidateFields(surveyById)
 
@@ -197,6 +197,7 @@ const openVoteDetail = (candidate: Candidate) => {
           拒绝
         </n-button>
         <n-popconfirm
+          v-if="!candidateHasVoteRecords(c)"
           positive-text="删除"
           negative-text="取消"
           @positive-click="deleteCandidate(c)"
@@ -207,8 +208,9 @@ const openVoteDetail = (candidate: Candidate) => {
               删除
             </n-button>
           </template>
-          删除后会移除该候选项，并清理投票记录中对它的选择。
+          删除未产生投票记录的候选项。
         </n-popconfirm>
+        <n-tag v-else size="small" :bordered="false">已有投票，仅可拒绝</n-tag>
       </n-space>
     </div>
   </n-space>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import QRCode from 'qrcode'
 import { NAlert, NButton, NCard, NDatePicker, NForm, NFormItem, NInput, NInputNumber, NRadioButton, NRadioGroup, NSelect, NSpace, NSwitch, NTag } from 'naive-ui'
 import { Copy, Download, Eye, Save, Settings2 } from '../../icons'
 import { useAppState } from '../../composables/useAppState'
@@ -58,7 +59,17 @@ const posterMode = ref<PosterMode>('mobile')
 const wallpaperKey = ref<WallpaperKey>('bedrock')
 
 const publicSurveyUrl = computed(() => publicSurveyUrlFor(survey.value.id))
-const publicSurveyQrUrl = computed(() => `https://api.qrserver.com/v1/create-qr-code/?size=520x520&margin=12&data=${encodeURIComponent(publicSurveyUrl.value)}`)
+const publicSurveyQrUrl = ref('')
+let qrGeneration = 0
+watch(publicSurveyUrl, async (url) => {
+  const generation = ++qrGeneration
+  try {
+    const dataUrl = await QRCode.toDataURL(url, { width: 520, margin: 1, errorCorrectionLevel: 'M' })
+    if (generation === qrGeneration) publicSurveyQrUrl.value = dataUrl
+  } catch {
+    if (generation === qrGeneration) publicSurveyQrUrl.value = ''
+  }
+}, { immediate: true })
 const selectedWallpaper = computed(() => wallpaperOptions.find((item) => item.value === wallpaperKey.value) ?? wallpaperOptions[0])
 const posterBackground = computed(() => posterMode.value === 'mobile' ? selectedWallpaper.value.mobile : selectedWallpaper.value.desktop)
 const posterModeOptions = [
@@ -76,7 +87,7 @@ const copyPublicLink = async () => {
 }
 
 const openPublicPreview = async () => {
-  if (surveySettingsDirty.value) await saveSurveySettings('问卷设置已保存')
+  if (surveySettingsDirty.value && !await saveSurveySettings('问卷设置已保存')) return
   window.open(publicSurveyUrl.value, '_blank', 'noopener,noreferrer')
 }
 
@@ -136,6 +147,10 @@ const downloadPoster = async () => {
   canvas.height = height
   const ctx = canvas.getContext('2d')
   if (!ctx) return
+  if (!publicSurveyQrUrl.value) {
+    message.error('二维码尚未生成，请稍后重试。')
+    return
+  }
 
   try {
     const [bg, qr] = await Promise.all([
@@ -296,7 +311,7 @@ const downloadPoster = async () => {
       </n-space>
 
       <n-alert v-if="surveyHasVotes" type="info" :bordered="false" style="margin-bottom: 16px">
-        该问卷已有投票。修改规则会影响之后的提交。
+        该问卷已有投票。切换单选/多选或调整上限不会改写历史记录；之后的新投票和主动修改按新规则校验。
       </n-alert>
 
       <n-space justify="space-between" align="center" style="margin-bottom: 16px">
@@ -359,7 +374,7 @@ const downloadPoster = async () => {
                 <small>{{ survey.description || '扫码参与问卷投票' }}</small>
               </div>
               <div class="poster-card-qr">
-                <img :src="publicSurveyQrUrl" alt="问卷二维码" />
+                <img v-if="publicSurveyQrUrl" :src="publicSurveyQrUrl" alt="问卷二维码" />
                 <span>扫码参与投票</span>
               </div>
             </div>

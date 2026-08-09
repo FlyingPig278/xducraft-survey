@@ -3,6 +3,7 @@ import { nextTick, ref } from 'vue'
 import { NButton, NModal, NSpace, NTag } from 'naive-ui'
 import { CirclePlay, Download, Info } from '../../icons'
 import MarkdownGuide from '../common/MarkdownGuide.vue'
+import { openHttpUrl } from '../../utils/security'
 
 defineProps<{
   title: string
@@ -19,7 +20,6 @@ const setShowIntro = (value: boolean) => {
   if (!value) void nextTick(() => triggerRef.value?.blur())
 }
 
-const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }
 </script>
 
 <template>
@@ -49,11 +49,11 @@ const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,nor
     <div class="candidate-intro-modal">
       <MarkdownGuide v-if="intro" :source="intro" />
       <n-space v-if="packUrl || videoUrl" vertical :size="10" class="candidate-info-actions">
-        <n-button v-if="packUrl" type="primary" size="large" block @click="openExternal(packUrl)">
+        <n-button v-if="packUrl" type="primary" size="large" block @click="openHttpUrl(packUrl)">
           <template #icon><Download :size="16" :stroke-width="2" /></template>
           打开整合包链接
         </n-button>
-        <n-button v-if="videoUrl" size="large" block secondary @click="openExternal(videoUrl)">
+        <n-button v-if="videoUrl" size="large" block secondary @click="openHttpUrl(videoUrl)">
           <template #icon><CirclePlay :size="16" :stroke-width="2" /></template>
           观看宣传视频
         </n-button>

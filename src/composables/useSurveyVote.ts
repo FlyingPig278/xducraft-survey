@@ -4,6 +4,7 @@ import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { getSurveyAvailability, isSurveyAcceptingSubmissions } from './useSurveyAvailability'
 import { surveyApi } from '../api'
+import { safeHttpUrl } from '../utils/security'
 
 const selectedCandidateIds = ref<string[]>([])
 const voteConfirmOpen = ref(false)
@@ -19,6 +20,7 @@ export function useSurveyVote() {
 
   const surveyCandidates = computed(() => appState.value.candidates.filter((c) => c.surveyId === survey.value.id))
   const surveyVotes = computed(() => appState.value.votes.filter((v) => v.surveyId === survey.value.id))
+  const surveyResults = computed(() => appState.value.results[survey.value.id])
   const candidateSortOrder = (candidate: Candidate) => Number.isFinite(candidate.sortOrder) ? candidate.sortOrder : Number.MAX_SAFE_INTEGER
   const approvedCandidates = computed(() => surveyCandidates.value
     .filter((c) => c.status === 'approved')
@@ -35,11 +37,17 @@ export function useSurveyVote() {
   const hasSubmittedCurrentSurvey = computed(() => Boolean(currentVote.value) || submittedSurveyId.value === survey.value.id)
   const showSubmissionSummary = computed(() => hasSubmittedCurrentSurvey.value && !editingVote.value)
 
-  const totalVoters = computed(() => surveyVotes.value.length)
-  const totalSelections = computed(() => surveyVotes.value.reduce((t, v) => t + v.candidateIds.length, 0))
+  const totalVoters = computed(() => surveyResults.value?.totalVoters ?? surveyVotes.value.length)
+  const totalSelections = computed(() => surveyResults.value?.totalSelections ??
+    surveyVotes.value.reduce((total, vote) => total + vote.candidateIds.length, 0))
   const candidateCounts = computed(() => {
+    if (surveyResults.value) {
+      return new Map(Object.entries(surveyResults.value.counts).map(([id, count]) => [id, Number(count)]))
+    }
     const counts = new Map<string, number>()
-    surveyVotes.value.forEach((v) => { v.candidateIds.forEach((id) => { counts.set(id, (counts.get(id) ?? 0) + 1) }) })
+    surveyVotes.value.forEach((vote) => {
+      vote.candidateIds.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1))
+    })
     return counts
   })
 
@@ -130,18 +138,13 @@ export function useSurveyVote() {
     candidateModalOpen.value = true
   }
 
-  const validateUrl = (value: string) => {
-    if (!value.trim()) return true
-    try { new URL(value); return true } catch { return false }
-  }
-
   const submitCandidate = async () => {
     submissionMessage.value = ''
     if (!isSurveyAcceptingSubmissions(survey.value) || !survey.value.candidateSubmission.enabled) { submissionMessage.value = '当前问卷没有开放候选项投稿。'; return }
     for (const field of survey.value.candidateFields) {
       const val = submissionValues.value[field.key]?.trim() ?? ''
       if (field.required && !val) { submissionMessage.value = `请填写「${field.label}」。`; return }
-      if (field.type === 'url' && !validateUrl(val)) { submissionMessage.value = `「${field.label}」需要是完整链接。`; return }
+      if (field.type === 'url' && val && !safeHttpUrl(val)) { submissionMessage.value = `「${field.label}」只接受 http 或 https 完整链接。`; return }
     }
     const normalize = (v: string) => v.trim().toLowerCase().replace(/\s+/g, ' ')
     const title = submissionValues.value.packName?.trim() || submissionValues.value.name?.trim() || submissionValues.value.title?.trim() || survey.value.candidateFields.map((f) => submissionValues.value[f.key]).find(Boolean)?.trim() || '未命名候选项'

@@ -1,10 +1,10 @@
 import { computed, ref } from 'vue'
 import type { Candidate, CandidateStatus } from '../types'
-import { createId } from '../storage'
 import { useAppState } from './useAppState'
 import { useAuth } from './useAuth'
 import { statusLabel } from './useCandidateFields'
 import { surveyApi } from '../api'
+import { safeHttpUrl } from '../utils/security'
 
 type CandidateFilter = CandidateStatus | 'all'
 
@@ -38,10 +38,6 @@ export function useAdminCandidates() {
   const editingCandidateSurvey = computed(() => editingCandidate.value ? surveyById(editingCandidate.value.surveyId) : null)
   const editingCandidateFields = computed(() => editingCandidateSurvey.value?.candidateFields ?? [])
 
-  const validateUrl = (value: string) => {
-    if (!value.trim()) return true
-    try { new URL(value); return true } catch { return false }
-  }
   const normalize = (v: string) => v.trim().toLowerCase().replace(/\s+/g, ' ')
 
   const initAdminCandidateValues = () => {
@@ -67,7 +63,7 @@ export function useAdminCandidates() {
     for (const field of survey.value.candidateFields) {
       const val = adminCandidateValues.value[field.key]?.trim() ?? ''
       if (field.required && !val) { message.warning(`请填写「${field.label}」。`); return }
-      if (field.type === 'url' && !validateUrl(val)) { message.warning(`「${field.label}」需要是完整链接。`); return }
+      if (field.type === 'url' && val && !safeHttpUrl(val)) { message.warning(`「${field.label}」只接受 http 或 https 完整链接。`); return }
     }
     const title = titleFromValues(adminCandidateValues.value)
     if (appState.value.candidates.find((c) => c.surveyId === surveyId && c.status !== 'rejected' && normalize(c.title) === normalize(title))) {
@@ -105,7 +101,7 @@ export function useAdminCandidates() {
     for (const field of ownerSurvey.candidateFields) {
       const val = cleanedValues[field.key] ?? ''
       if (field.required && !val) { message.warning(`请填写「${field.label}」。`); return }
-      if (field.type === 'url' && !validateUrl(val)) { message.warning(`「${field.label}」需要是完整链接。`); return }
+      if (field.type === 'url' && val && !safeHttpUrl(val)) { message.warning(`「${field.label}」只接受 http 或 https 完整链接。`); return }
     }
     const title = cleanedValues.packName || cleanedValues.name || cleanedValues.title ||
       ownerSurvey.candidateFields.map((f) => cleanedValues[f.key]).find(Boolean)?.trim() || candidate.title
@@ -170,13 +166,17 @@ export function useAdminCandidates() {
 
   const moveCandidate = async (candidate: Candidate, offset: number) => {
     if (!isAdmin.value || !currentUser.value) { message.error('请先登录管理员身份。'); return }
-    const rows = orderedCandidatesForMove(candidate)
-    const index = rows.findIndex((item) => item.id === candidate.id)
-    const next = index + offset
-    if (index < 0 || next < 0 || next >= rows.length) return
-    const nextRows = [...rows]
-    const [item] = nextRows.splice(index, 1)
-    nextRows.splice(next, 0, item)
+    const visibleRows = orderedCandidatesForMove(candidate)
+    const visibleIndex = visibleRows.findIndex((item) => item.id === candidate.id)
+    const targetVisibleIndex = visibleIndex + offset
+    if (visibleIndex < 0 || targetVisibleIndex < 0 || targetVisibleIndex >= visibleRows.length) return
+
+    const allRows = orderedCandidatesForSurvey(candidate.surveyId)
+    const sourceIndex = allRows.findIndex((item) => item.id === candidate.id)
+    const targetIndex = allRows.findIndex((item) => item.id === visibleRows[targetVisibleIndex].id)
+    if (sourceIndex < 0 || targetIndex < 0) return
+    const nextRows = [...allRows]
+    ;[nextRows[sourceIndex], nextRows[targetIndex]] = [nextRows[targetIndex], nextRows[sourceIndex]]
     try {
       applyRemoteState(await surveyApi.reorderAdminCandidates({
         surveyId: candidate.surveyId,
@@ -188,6 +188,13 @@ export function useAdminCandidates() {
     }
     message.success('候选项顺序已更新')
   }
+
+  const candidateHasVoteRecords = (candidate: Candidate) => appState.value.votes.some((vote) =>
+    vote.surveyId === candidate.surveyId && (
+      vote.candidateIds.includes(candidate.id) ||
+      vote.history.some((snapshot) => snapshot.candidateIds.includes(candidate.id))
+    )
+  )
 
   return {
     candidateFilter,
@@ -208,6 +215,7 @@ export function useAdminCandidates() {
     saveCandidateEdit,
     setCandidateStatus,
     deleteCandidate,
+    candidateHasVoteRecords,
     canMoveCandidate,
     moveCandidate
   }

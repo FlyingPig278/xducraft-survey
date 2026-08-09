@@ -8,6 +8,7 @@ const currentUser = ref<AuthUser | null>(loadUser())
 const guestDraft = reactive({ gameId: '' })
 const guestNameModalOpen = ref(false)
 let guestNameResolve: ((confirmed: boolean) => void) | null = null
+let guestNamePromise: Promise<boolean> | null = null
 
 export function useAuth() {
   const { loadAppState, message } = useAppState()
@@ -66,12 +67,17 @@ export function useAuth() {
     }
   }
 
+  const settleGuestName = (confirmed: boolean) => {
+    guestNameModalOpen.value = false
+    guestNameResolve?.(confirmed)
+    guestNameResolve = null
+    guestNamePromise = null
+  }
+
   const logout = () => {
     currentUser.value = null
     guestDraft.gameId = ''
-    guestNameModalOpen.value = false
-    guestNameResolve?.(false)
-    guestNameResolve = null
+    settleGuestName(false)
     clearSessionStorage()
     void loadAppState({ silent: true })
     message.info('已退出登录')
@@ -79,20 +85,20 @@ export function useAuth() {
 
   const requestGuestName = (): Promise<boolean> => {
     if (currentUser.value || guestDraft.gameId.trim()) return Promise.resolve(true)
+    if (guestNamePromise) return guestNamePromise
     guestNameModalOpen.value = true
-    return new Promise((resolve) => { guestNameResolve = resolve })
+    const { promise, resolve } = Promise.withResolvers<boolean>()
+    guestNameResolve = resolve
+    guestNamePromise = promise
+    return promise
   }
 
   const confirmGuestName = () => {
-    guestNameModalOpen.value = false
-    guestNameResolve?.(true)
-    guestNameResolve = null
+    settleGuestName(true)
   }
 
   const cancelGuestName = () => {
-    guestNameModalOpen.value = false
-    guestNameResolve?.(false)
-    guestNameResolve = null
+    settleGuestName(false)
   }
 
   return {

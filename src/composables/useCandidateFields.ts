@@ -35,9 +35,8 @@ export function useCandidateFields(surveyById: (id: string) => SurveyDefinition 
     return fields.map((field) => ({ key: field.key, label: field.label, value: candidate.fields[field.key] || '未填' }))
   }
 
-  const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }
 
-  return { candidateMetaFor, candidatePackUrl, candidateVideoUrl, candidateIntro, candidateCategory, candidateReviewFields, openExternal }
+  return { candidateMetaFor, candidatePackUrl, candidateVideoUrl, candidateIntro, candidateCategory, candidateReviewFields }
 }
 
 export const fieldOptions = (field: FieldDefinition) => field.options?.filter(Boolean) ?? []

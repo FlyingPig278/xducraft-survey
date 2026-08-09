@@ -69,28 +69,41 @@ const authHeaders = () => {
 }
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...init?.headers
-    }
-  })
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 15000)
+  const abortFromCaller = () => controller.abort(init?.signal?.reason)
+  init?.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  try {
+    const response = await fetch(apiUrl(path), {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+        ...init?.headers
+      }
+    })
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    let message = errorText || `API 请求失败：${response.status}`
-    try {
-      const body = JSON.parse(errorText) as { error?: string }
-      message = body.error || message
-    } catch {
-      // Plain text error body.
+    if (!response.ok) {
+      const errorText = await response.text()
+      let message = errorText || `API 请求失败：${response.status}`
+      try {
+        const body = JSON.parse(errorText) as { error?: string }
+        message = body.error || message
+      } catch {
+        // Plain text error body.
+      }
+      throw new Error(message)
     }
-    throw new Error(message)
+
+    return response.json() as Promise<T>
+  } catch (error) {
+    if (controller.signal.aborted && !init?.signal?.aborted) throw new Error('API 请求超时，请稍后重试。')
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+    init?.signal?.removeEventListener('abort', abortFromCaller)
   }
-
-  return response.json() as Promise<T>
 }
 
 export const surveyApi = {

@@ -1,13 +1,24 @@
 import { createServer } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { setDefaultResultOrder } from 'node:dns'
 import { connect as tlsConnect } from 'node:tls'
+import { createJsonStateStore } from './lib/jsonStateStore.mjs'
+import {
+  clientIpFromRequest,
+  createWindowRateLimiter,
+  httpError,
+  isHttpUrl,
+  parseIntegerEnv,
+  readJsonBody,
+  validateSecret
+} from './lib/httpUtils.mjs'
+import { stateForViewer } from './lib/stateViews.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
@@ -60,29 +71,42 @@ const accessLogFile = process.env.XDUCRAFT_ACCESS_LOG_FILE
   ? path.resolve(process.env.XDUCRAFT_ACCESS_LOG_FILE)
   : path.join(logDir, 'access.log')
 const accessFileLogEnabled = process.env.XDUCRAFT_ACCESS_FILE_LOG !== 'false'
-const port = Number(process.env.PORT || 8787)
+const isProduction = process.env.NODE_ENV === 'production' || process.env.XDUCRAFT_ENV === 'production'
+const port = parseIntegerEnv('PORT', 8787, { min: 1, max: 65535 })
 const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '')
+const allowedOrigins = new Set([
+  new URL(frontendBaseUrl).origin,
+  ...(process.env.XDUCRAFT_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean)
+])
 const blessingBaseUrl = (process.env.BLESSING_BASE_URL || '').replace(/\/+$/, '')
 const blessingClientId = process.env.BLESSING_CLIENT_ID || ''
 const blessingClientSecret = process.env.BLESSING_CLIENT_SECRET || ''
 const blessingRedirectUri = process.env.BLESSING_REDIRECT_URI || `http://localhost:${port}/api/auth/blessing/callback`
 const blessingOAuthScope = process.env.BLESSING_OAUTH_SCOPE ?? ''
 const blessingAdminIds = new Set((process.env.BLESSING_ADMIN_IDS || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean))
-const blessingFetchTimeoutMs = Math.max(1000, Number(process.env.BLESSING_FETCH_TIMEOUT_MS || 8000))
-const blessingFetchRetries = Math.max(0, Number(process.env.BLESSING_FETCH_RETRIES || 2))
-const blessingTokenRetries = Math.max(0, Number(process.env.BLESSING_TOKEN_RETRIES || 0))
+const blessingFetchTimeoutMs = parseIntegerEnv('BLESSING_FETCH_TIMEOUT_MS', 8000, { min: 1000, max: 60000 })
+const blessingFetchRetries = parseIntegerEnv('BLESSING_FETCH_RETRIES', 2, { min: 0, max: 5 })
+const blessingTokenRetries = parseIntegerEnv('BLESSING_TOKEN_RETRIES', 0, { min: 0, max: 3 })
 const blessingUserAgent = process.env.BLESSING_USER_AGENT || 'XDUCraft-Survey/0.1'
-const blessingIpFamily = Number(process.env.BLESSING_IP_FAMILY || 4)
+const blessingIpFamily = parseIntegerEnv('BLESSING_IP_FAMILY', 4, { min: 0, max: 6 })
 const blessingFetchPlayers = process.env.BLESSING_FETCH_PLAYERS === 'true'
 const blessingProxyUrl = process.env.BLESSING_PROXY_URL || ''
 const blessingDebugProfile = process.env.BLESSING_DEBUG_PROFILE === 'true'
-const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
-const sessionTtlMs = Math.max(3600, Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14)) * 1000
-const proxySecret = process.env.XDUCRAFT_PROXY_SECRET || ''
+const configuredSessionSecret = process.env.SESSION_SECRET || ''
+if (configuredSessionSecret) validateSecret('SESSION_SECRET', configuredSessionSecret)
+if (isProduction && !configuredSessionSecret) throw new Error('生产环境必须配置 SESSION_SECRET。')
+if (!configuredSessionSecret) console.warn('[security] SESSION_SECRET 未配置，本次启动使用临时密钥，重启后现有会话会失效。')
+const sessionSecret = configuredSessionSecret || randomBytes(32).toString('hex')
+const sessionTtlMs = parseIntegerEnv('SESSION_TTL_SECONDS', 60 * 60 * 24 * 14, { min: 3600, max: 60 * 60 * 24 * 30 }) * 1000
+const proxySecret = validateSecret('XDUCRAFT_PROXY_SECRET', process.env.XDUCRAFT_PROXY_SECRET || '')
+const maxJsonBodyBytes = parseIntegerEnv('XDUCRAFT_MAX_JSON_BODY_BYTES', 128 * 1024, { min: 4096, max: 1024 * 1024 })
+const maxOAuthResponseBytes = parseIntegerEnv('BLESSING_MAX_RESPONSE_BYTES', 1024 * 1024, { min: 16384, max: 8 * 1024 * 1024 })
+const maxLogBytes = parseIntegerEnv('XDUCRAFT_LOG_MAX_BYTES', 10 * 1024 * 1024, { min: 1024 * 1024, max: 1024 * 1024 * 1024 })
 const oauthStates = new Map()
 const authTickets = new Map()
 const oauthStateTtlMs = 10 * 60 * 1000
 const authTicketTtlMs = 2 * 60 * 1000
+const rateLimit = createWindowRateLimiter({ windowMs: 60 * 1000 })
 
 const now = () => new Date().toISOString()
 let authLogQueue = Promise.resolve()
@@ -99,6 +123,20 @@ const sanitizeLogValue = (value) => {
   return value
 }
 
+const appendLogRecord = async (filePath, record) => {
+  await mkdir(path.dirname(filePath), { recursive: true })
+  try {
+    const fileStat = await stat(filePath)
+    if (fileStat.size >= maxLogBytes) {
+      await rm(`${filePath}.1`, { force: true })
+      await rename(filePath, `${filePath}.1`)
+    }
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error
+  }
+  await appendFile(filePath, `${JSON.stringify(record)}\n`, 'utf8')
+}
+
 const writeAuthLog = (event, fields = {}) => {
   if (!authFileLogEnabled) return
   const record = {
@@ -109,8 +147,7 @@ const writeAuthLog = (event, fields = {}) => {
   }
   const appendRecord = async () => {
     try {
-      await mkdir(path.dirname(authLogFile), { recursive: true })
-      await appendFile(authLogFile, `${JSON.stringify(record)}\n`, 'utf8')
+      await appendLogRecord(authLogFile, record)
     } catch {
       // Logging must never break auth flow.
     }
@@ -128,8 +165,7 @@ const writeAccessLog = (event, fields = {}) => {
   }
   const appendRecord = async () => {
     try {
-      await mkdir(path.dirname(accessLogFile), { recursive: true })
-      await appendFile(accessLogFile, `${JSON.stringify(record)}\n`, 'utf8')
+      await appendLogRecord(accessLogFile, record)
     } catch {
       // Diagnostics should never break the API.
     }
@@ -138,7 +174,7 @@ const writeAccessLog = (event, fields = {}) => {
 }
 
 const createId = (prefix) =>
-  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  `${prefix}-${Date.now().toString(36)}-${randomBytes(6).toString('base64url')}`
 
 const createToken = (prefix) => `${prefix}-${randomBytes(18).toString('base64url')}`
 
@@ -166,6 +202,7 @@ const createSessionToken = (user) => {
     role: user.role,
     authProvider: user.authProvider,
     blessingUserId: user.blessingUserId,
+    adminGrantKey: user.adminGrantKey,
     exp: Date.now() + sessionTtlMs
   })
   return `${payload}.${signSessionPayload(payload)}`
@@ -184,7 +221,8 @@ const verifySessionToken = (token) => {
       gameId: String(data.gameId || ''),
       role: data.role === 'admin' ? 'admin' : 'player',
       authProvider: 'blessing',
-      blessingUserId: data.blessingUserId ? String(data.blessingUserId) : undefined
+      blessingUserId: data.blessingUserId ? String(data.blessingUserId) : undefined,
+      adminGrantKey: data.adminGrantKey ? normalizeUserKey(data.adminGrantKey) : undefined
     }
   } catch {
     return null
@@ -199,28 +237,28 @@ const userFromRequest = (req) => {
 
 const deviceIdFromRequest = (req) => {
   const value = Array.isArray(req.headers['x-device-id']) ? req.headers['x-device-id'][0] : req.headers['x-device-id']
-  const normalized = String(value || '').trim().replace(/[^a-zA-Z0-9_:-]/g, '-')
+  const normalized = String(value || '').trim().slice(0, 128).replace(/[^a-zA-Z0-9_:-]/g, '-')
   return normalized || ''
 }
 
 const viewerFromRequest = (req) => {
   const user = userFromRequest(req)
-  if (user) return { user, userId: user.id, name: user.displayName, gameId: user.gameId, role: user.role }
+  if (user) {
+    const role = user.role === 'admin' && user.adminGrantKey && blessingAdminIds.has(user.adminGrantKey) ? 'admin' : 'player'
+    return { user: { ...user, role }, userId: user.id, name: user.displayName, gameId: user.gameId, role }
+  }
   const deviceId = deviceIdFromRequest(req)
   if (deviceId) return { user: null, userId: `anon-${deviceId}`, name: '匿名玩家', gameId: '', role: 'player' }
   return { user: null, userId: '', name: '匿名玩家', gameId: '', role: 'player' }
 }
 
-const httpError = (status, message) => {
-  const error = new Error(message)
-  error.status = status
-  return error
-}
 
 const requireAdmin = (req) => {
   const user = userFromRequest(req)
   if (!user) throw httpError(401, '请先登录管理员账号。')
-  if (user.role !== 'admin') throw httpError(403, '当前账号没有管理员权限。')
+  if (user.role !== 'admin' || !user.adminGrantKey || !blessingAdminIds.has(user.adminGrantKey)) {
+    throw httpError(403, '当前账号没有管理员权限，或管理员授权已被撤销。')
+  }
   return user
 }
 
@@ -381,15 +419,17 @@ const requestBlessingDirect = (pathname, init = {}, trace = {}) => new Promise((
     host: url.host,
     transport: 'direct'
   }
-  const requestOptions = {
-    method,
-    headers,
-    timeout: blessingFetchTimeoutMs
-  }
-  if (blessingIpFamily === 4 || blessingIpFamily === 6) {
-    requestOptions.family = blessingIpFamily
-  }
+  const requestOptions = { method, headers, timeout: blessingFetchTimeoutMs }
+  if (blessingIpFamily === 4 || blessingIpFamily === 6) requestOptions.family = blessingIpFamily
 
+  let settled = false
+  let absoluteTimeout
+  const settle = (callback, value) => {
+    if (settled) return
+    settled = true
+    clearTimeout(absoluteTimeout)
+    callback(value)
+  }
   const transport = url.protocol === 'http:' ? httpRequest : httpsRequest
   writeAuthLog('blessing.request.direct.start', { ...baseLog, timeoutMs: blessingFetchTimeoutMs, ipFamily: blessingIpFamily })
   const req = transport(url, requestOptions, (response) => {
@@ -399,29 +439,39 @@ const requestBlessingDirect = (pathname, init = {}, trace = {}) => new Promise((
       elapsedMs: Date.now() - startedAt
     })
     const chunks = []
+    let responseBytes = 0
     response.on('data', (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      responseBytes += buffer.length
+      if (responseBytes > maxOAuthResponseBytes) {
+        response.destroy(new Error('XDUCraft 皮肤站响应过大'))
+        return
+      }
+      chunks.push(buffer)
     })
     response.on('end', () => {
       try {
+        const responseBuffer = Buffer.concat(chunks)
         writeAuthLog('blessing.request.direct.end', {
           ...baseLog,
           statusCode: response.statusCode,
-          bodyBytes: Buffer.concat(chunks).length,
+          bodyBytes: responseBuffer.length,
           elapsedMs: Date.now() - startedAt
         })
-        resolve(parseJsonPayload(
+        settle(resolve, parseJsonPayload(
           response.statusCode ?? 0,
           response.statusMessage ?? '',
-          Buffer.concat(chunks).toString('utf8')
+          responseBuffer.toString('utf8')
         ))
       } catch (error) {
-        reject(error)
+        settle(reject, error)
       }
     })
+    response.on('aborted', () => settle(reject, new Error('XDUCraft 皮肤站响应被中断')))
+    response.on('error', (error) => settle(reject, error))
   })
 
-  const absoluteTimeout = setTimeout(() => {
+  absoluteTimeout = setTimeout(() => {
     writeAuthLog('blessing.request.direct.timeout', { ...baseLog, elapsedMs: Date.now() - startedAt })
     req.destroy(createTimeoutError())
   }, blessingFetchTimeoutMs)
@@ -449,12 +499,8 @@ const requestBlessingDirect = (pathname, init = {}, trace = {}) => new Promise((
     req.destroy(createTimeoutError())
   })
   req.on('error', (error) => {
-    clearTimeout(absoluteTimeout)
     writeAuthLog('blessing.request.direct.error', { ...baseLog, error: describeFetchError(error), elapsedMs: Date.now() - startedAt })
-    reject(error)
-  })
-  req.on('close', () => {
-    clearTimeout(absoluteTimeout)
+    settle(reject, error)
   })
   if (body) req.write(body)
   req.end()
@@ -534,10 +580,19 @@ const requestBlessingViaProxy = (pathname, init = {}, trace = {}) => new Promise
     })
 
     const chunks = []
+    let responseBytes = 0
+    let responseEnded = false
     tlsSocket.on('data', (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      responseBytes += buffer.length
+      if (responseBytes > maxOAuthResponseBytes) {
+        tlsSocket.destroy(new Error('XDUCraft 皮肤站响应过大'))
+        return
+      }
+      chunks.push(buffer)
     })
     tlsSocket.on('end', () => {
+      responseEnded = true
       clearTimeout(absoluteTimeout)
       try {
         writeAuthLog('blessing.request.proxy.end', {
@@ -554,6 +609,12 @@ const requestBlessingViaProxy = (pathname, init = {}, trace = {}) => new Promise
       clearTimeout(absoluteTimeout)
       writeAuthLog('blessing.request.proxy.error', { ...baseLog, error: describeFetchError(error), elapsedMs: Date.now() - startedAt })
       reject(error)
+    })
+    tlsSocket.on('close', (hadError) => {
+      if (!responseEnded && !hadError) {
+        clearTimeout(absoluteTimeout)
+        reject(new Error('XDUCraft 皮肤站代理连接提前关闭'))
+      }
     })
   })
 
@@ -696,7 +757,8 @@ const logBlessingProfileShape = (rawProfile, profile, adminKeys, traceId) => {
 
 const mapBlessingUser = (rawProfile, traceId) => {
   const profile = unwrapBlessingProfile(rawProfile)
-  const blessingUserId = firstText(profile.uid, profile.id, profile.user_id, profile.email, profile.nickname, profile.username, createId('blessing-user'))
+  const blessingUserId = firstText(profile.uid, profile.id, profile.user_id, profile.email, profile.nickname, profile.username)
+  if (!blessingUserId) throw new Error('XDUCraft 皮肤站未返回可用于识别账号的稳定字段')
   const email = firstText(profile.email)
   const displayName = firstText(profile.nickname, profile.username, profile.name, email.split('@')[0], `用户 ${blessingUserId}`)
   const players = Array.isArray(profile.players) ? profile.players : []
@@ -706,9 +768,6 @@ const mapBlessingUser = (rawProfile, traceId) => {
   const playerIds = players
     .map((player) => firstText(player?.pid, player?.id, player?.uuid))
     .filter(Boolean)
-  const permissions = Array.isArray(profile.permissions) ? profile.permissions : []
-  const roles = Array.isArray(profile.roles) ? profile.roles : []
-  const groups = Array.isArray(profile.groups) ? profile.groups : []
   const gameId = firstText(profile.player_name, profile.gameId, profile.game_id, ...playerNames, profile.username, profile.nickname, displayName)
   const adminKeys = [
     blessingUserId,
@@ -719,25 +778,22 @@ const mapBlessingUser = (rawProfile, traceId) => {
     profile.nickname,
     profile.username,
     profile.name,
-    profile.permission,
-    ...permissions,
-    ...roles,
-    ...groups,
     ...playerIds,
     ...playerNames,
     displayName,
     gameId
-  ].map(normalizeUserKey)
+  ].map(normalizeUserKey).filter(Boolean)
   logBlessingProfileShape(rawProfile, profile, adminKeys, traceId)
-  const canUseAdmin = adminKeys.some((key) => blessingAdminIds.has(key))
+  const adminGrantKey = adminKeys.find((key) => blessingAdminIds.has(key))
   const normalizedId = blessingUserId.toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9_:-]/g, '-') || createId('user')
   return {
     id: `blessing-${normalizedId}`,
     displayName,
     gameId,
-    role: canUseAdmin ? 'admin' : 'player',
+    role: adminGrantKey ? 'admin' : 'player',
     authProvider: 'blessing',
-    blessingUserId
+    blessingUserId,
+    adminGrantKey
   }
 }
 
@@ -797,14 +853,16 @@ const timeValue = (value) => {
 }
 
 const normalizeDateInput = (value) => {
+  if (value === null || value === undefined || value === '') return null
   const ts = timeValue(value)
-  return ts ? new Date(ts).toISOString() : null
+  if (ts === null) throw httpError(400, '日期时间格式不正确。')
+  return new Date(ts).toISOString()
 }
 
 const validateSurveyTimeWindow = (startsAt, endsAt) => {
   const start = timeValue(startsAt)
   const end = timeValue(endsAt)
-  if (start && end && end <= start) throw httpError(400, '结束时间需要晚于开始时间。')
+  if (start !== null && end !== null && end <= start) throw httpError(400, '结束时间需要晚于开始时间。')
 }
 
 const isSurveyAcceptingSubmissions = (survey, ts = Date.now()) => {
@@ -816,121 +874,45 @@ const isSurveyAcceptingSubmissions = (survey, ts = Date.now()) => {
   return true
 }
 
-const publicVotesFor = (state, viewer) => {
-  const visible = []
-  for (const vote of state.votes) {
-    const survey = state.surveys.find((item) => item.id === vote.surveyId)
-    const isOwnVote = viewer.userId && vote.userId === viewer.userId
-    const canExposeAggregate = survey?.resultVisibility === 'always' ||
-      (survey?.resultVisibility === 'after_vote' && state.votes.some((item) => item.surveyId === vote.surveyId && item.userId === viewer.userId))
-    if (!isOwnVote && !canExposeAggregate) continue
-    visible.push({
-      id: isOwnVote ? vote.id : `public-${vote.id}`,
-      surveyId: vote.surveyId,
-      userId: isOwnVote ? vote.userId : `public-${vote.id}`,
-      userName: isOwnVote ? vote.userName : '匿名玩家',
-      gameId: isOwnVote ? vote.gameId : '',
-      candidateIds: Array.isArray(vote.candidateIds) ? [...vote.candidateIds] : [],
-      createdAt: vote.createdAt,
-      updatedAt: vote.updatedAt,
-      history: isOwnVote ? (vote.history ?? []) : []
-    })
-  }
-  return visible
-}
+const stateForRequest = (state, req) => stateForViewer(state, viewerFromRequest(req))
 
-const publicStateFor = (state, viewer) => ({
-  surveys: state.surveys,
-  candidates: state.candidates
-    .filter((candidate) => candidate.status === 'approved')
-    .map((candidate) => ({
-      ...candidate,
-      submitterUserId: '',
-      submitterName: '',
-      reviewedAt: undefined,
-      reviewerName: undefined,
-      reviewNote: undefined
-    })),
-  votes: publicVotesFor(state, viewer),
-  auditLogs: []
+const stateStore = createJsonStateStore({
+  filePath: stateFile,
+  createSeed: createSeedState,
+  normalize: normalizeState
 })
 
-const stateForRequest = (state, req) => {
-  const viewer = viewerFromRequest(req)
-  return viewer.user?.role === 'admin' ? state : publicStateFor(state, viewer)
+const loadState = () => stateStore.load()
+const updateState = (mutator) => stateStore.update(mutator)
+const validateUrl = isHttpUrl
+
+const boundedText = (value, label, maxLength, { required = false } = {}) => {
+  const text = String(value ?? '').trim()
+  if (required && !text) throw httpError(400, `请填写${label}。`)
+  if (text.length > maxLength) throw httpError(400, `${label}不能超过 ${maxLength} 个字符。`)
+  return text
 }
 
-const ensureDataDir = () => mkdir(dataDir, { recursive: true })
-let stateWriteQueue = Promise.resolve()
 
-const readStateFile = async () => {
-  await ensureDataDir()
-  try {
-    const raw = await readFile(stateFile, 'utf8')
-    return normalizeState(JSON.parse(raw))
-  } catch {
-    return createSeedState()
+const normalizeVoteLimit = (value) => {
+  const limit = Number(value)
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw httpError(400, '最大可选项数必须是 1 到 100 之间的整数。')
   }
+  return limit
 }
-
-const writeStateFile = async (state) => {
-  await ensureDataDir()
-  const normalized = normalizeState(state)
-  const tempFile = `${stateFile}.${process.pid}.${Date.now()}.tmp`
-  await writeFile(tempFile, JSON.stringify(normalized, null, 2), 'utf8')
-  await rename(tempFile, stateFile)
-  return normalized
-}
-
-const loadState = async () => {
-  const state = await readStateFile()
-  await saveState(state)
-  return state
-}
-
-const saveState = async (state) => {
-  const normalized = normalizeState(state)
-  stateWriteQueue = stateWriteQueue.then(() => writeStateFile(normalized), () => writeStateFile(normalized))
-  return stateWriteQueue
-}
-
-const updateState = async (mutator) => {
-  let output
-  stateWriteQueue = stateWriteQueue.then(async () => {
-    const state = await readStateFile()
-    output = await mutator(state)
-    await writeStateFile(state)
-    return output
-  }, async () => {
-    const state = await readStateFile()
-    output = await mutator(state)
-    await writeStateFile(state)
-    return output
-  })
-  await stateWriteQueue
-  return output
-}
-
-const readJsonBody = async (req) => {
-  const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
-  if (chunks.length === 0) return {}
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
-
-const validateUrl = (value) => {
-  if (!String(value || '').trim()) return true
-  try {
-    new URL(String(value))
-    return true
-  } catch {
-    return false
-  }
-}
-
 const normalizeTitle = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
-const cleanFieldValues = (values = {}) =>
-  Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value ?? '').trim()]))
+const asRecord = (value, label = '字段') => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw httpError(400, `${label}格式不正确。`)
+  return value
+}
+const cleanFieldValues = (survey, rawValues) => {
+  const values = asRecord(rawValues, '候选项字段')
+  return Object.fromEntries((survey.candidateFields ?? []).map((field) => [
+    field.key,
+    boundedText(values[field.key], `「${field.label}」`, field.type === 'textarea' ? 5000 : 1000)
+  ]))
+}
 
 const titleFromValues = (survey, values, fallback = '未命名候选项') =>
   values.packName?.trim() || values.name?.trim() || values.title?.trim() ||
@@ -941,25 +923,43 @@ const validateCandidateValues = (survey, values) => {
   for (const field of survey.candidateFields ?? []) {
     const value = values[field.key] ?? ''
     if (field.required && !value) throw httpError(400, `请填写「${field.label}」。`)
-    if (field.type === 'url' && !validateUrl(value)) throw httpError(400, `「${field.label}」需要是完整链接。`)
+    if (field.type === 'url' && !validateUrl(value)) throw httpError(400, `「${field.label}」只接受 http 或 https 完整链接。`)
+    if (field.type === 'select' && value && !(field.options ?? []).includes(value)) {
+      throw httpError(400, `「${field.label}」包含无效选项。`)
+    }
+    if (field.type === 'number' && value && !Number.isFinite(Number(value))) {
+      throw httpError(400, `「${field.label}」需要是有效数字。`)
+    }
   }
 }
 
-const normalizeCandidateFields = (fields = []) => fields.map((field, index) => ({
-  id: field.id || createId('field'),
-  key: String(field.key || `custom_field_${index + 1}`).trim().replace(/[^a-zA-Z0-9_]/g, '_'),
-  label: String(field.label || '').trim(),
-  type: ['text', 'textarea', 'url', 'select', 'number'].includes(field.type) ? field.type : 'text',
-  required: Boolean(field.required),
-  placeholder: String(field.placeholder || '').trim(),
-  options: Array.isArray(field.options) ? field.options.map((item) => String(item).trim()).filter(Boolean) : undefined
-}))
+const normalizeCandidateFields = (rawFields = []) => {
+  if (!Array.isArray(rawFields)) throw httpError(400, '候选项字段必须是数组。')
+  if (rawFields.length > 30) throw httpError(400, '候选项字段不能超过 30 个。')
+  return rawFields.map((rawField, index) => {
+    const field = asRecord(rawField, '候选项字段')
+    return {
+      id: boundedText(field.id || createId('field'), '字段 ID', 128, { required: true }),
+      key: String(field.key || `custom_field_${index + 1}`).trim().replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64),
+      label: boundedText(field.label, '字段名称', 80, { required: true }),
+      type: ['text', 'textarea', 'url', 'select', 'number'].includes(field.type) ? field.type : 'text',
+      required: Boolean(field.required),
+      placeholder: boundedText(field.placeholder, '字段提示', 200),
+      options: Array.isArray(field.options)
+        ? [...new Set(field.options.map((item) => boundedText(item, '选项', 100)).filter(Boolean))].slice(0, 100)
+        : undefined
+    }
+  })
+}
 
 const validateCandidateFields = (fields) => {
-  if (fields.some((field) => !field.key || !field.label)) throw httpError(400, '字段名称和 Key 不能为空。')
   const keys = new Set()
   for (const field of fields) {
+    if (!field.key || !field.label) throw httpError(400, '字段名称和 Key 不能为空。')
     if (keys.has(field.key)) throw httpError(400, `字段 key「${field.key}」重复。`)
+    if (field.type === 'select' && (!field.options || field.options.length === 0)) {
+      throw httpError(400, `选择字段「${field.label}」至少需要一个选项。`)
+    }
     keys.add(field.key)
   }
 }
@@ -971,8 +971,7 @@ const actorForSurvey = (req, survey, body = {}) => {
     return viewer
   }
   if (viewer.user) return viewer
-  const gameId = String(body.guestGameId || '').trim()
-  if (!gameId) throw httpError(400, '请填写游戏昵称。')
+  const gameId = boundedText(body.guestGameId, '游戏昵称', 32, { required: true })
   if (!viewer.userId) throw httpError(400, '缺少设备标识，请刷新页面后重试。')
   return { ...viewer, name: gameId, gameId }
 }
@@ -987,7 +986,9 @@ const submitVoteMutation = async (req, body) => updateState((state) => {
   ensureSurveyWritable(survey)
   const actor = actorForSurvey(req, survey, body)
   const voteLimit = survey.voteMode === 'single' ? 1 : Math.max(1, Number(survey.maxVotes) || 1)
-  const candidateIds = [...new Set(Array.isArray(body.candidateIds) ? body.candidateIds.map(String) : [])]
+  if (!Array.isArray(body.candidateIds)) throw httpError(400, '候选项列表格式不正确。')
+  if (body.candidateIds.length > 100) throw httpError(400, '候选项数量过多。')
+  const candidateIds = [...new Set(body.candidateIds.map((id) => boundedText(id, '候选项 ID', 128, { required: true })))]
   if (candidateIds.length === 0) throw httpError(400, '请至少选择一个候选项。')
   if (candidateIds.length > voteLimit) throw httpError(400, `最多选择 ${voteLimit} 项。`)
   const approvedIds = new Set(state.candidates.filter((item) => item.surveyId === survey.id && item.status === 'approved').map((item) => item.id))
@@ -1024,7 +1025,7 @@ const submitCandidateMutation = async (req, body) => updateState((state) => {
   ensureSurveyWritable(survey)
   if (!survey.candidateSubmission?.enabled) throw httpError(400, '当前问卷没有开放候选项投稿。')
   const actor = actorForSurvey(req, survey, body)
-  const values = cleanFieldValues(body.fields)
+  const values = cleanFieldValues(survey, body.fields)
   validateCandidateValues(survey, values)
   const title = titleFromValues(survey, values)
   if (state.candidates.find((item) => item.surveyId === survey.id && item.status !== 'rejected' && normalizeTitle(item.title) === normalizeTitle(title))) {
@@ -1052,16 +1053,15 @@ const submitCandidateMutation = async (req, body) => updateState((state) => {
 const createSurveyMutation = async (req, body) => {
   const admin = requireAdmin(req)
   return updateState((state) => {
-    const title = String(body.title || '').trim()
-    if (!title) throw httpError(400, '请填写问卷标题。')
+    const title = boundedText(body.title, '问卷标题', 120, { required: true })
     const fields = normalizeCandidateFields(body.candidateFields)
     validateCandidateFields(fields)
     const ts = now()
     const survey = {
       id: createId('survey'),
       title,
-      description: String(body.description || '').trim() || '请选择你愿意参与的服务器方案。',
-      guideText: String(body.guideText || '').trim(),
+      description: boundedText(body.description, '问卷描述', 2000) || '请选择你愿意参与的服务器方案。',
+      guideText: boundedText(body.guideText, '问卷说明', 10000),
       status: 'draft',
       startsAt: normalizeDateInput(body.startsAt),
       endsAt: normalizeDateInput(body.endsAt),
@@ -1069,7 +1069,7 @@ const createSurveyMutation = async (req, body) => {
       allowVoteEdits: Boolean(body.allowVoteEdits),
       requireLogin: body.requireLogin !== false,
       voteMode: body.voteMode === 'single' ? 'single' : 'multiple',
-      maxVotes: Math.max(1, Number(body.maxVotes) || 1),
+      maxVotes: normalizeVoteLimit(body.maxVotes ?? 1),
       candidateSubmission: {
         enabled: body.candidateSubmission?.enabled !== false,
         requiresReview: body.candidateSubmission?.requiresReview !== false
@@ -1081,7 +1081,7 @@ const createSurveyMutation = async (req, body) => {
     validateSurveyTimeWindow(survey.startsAt, survey.endsAt)
     state.surveys.unshift(survey)
     state.auditLogs.unshift({ id: createId('log'), action: 'survey.created', actor: admin.displayName, detail: `${admin.displayName} 创建了问卷「${survey.title}」`, surveyId: survey.id, createdAt: ts })
-    return { state: normalizeState(state), surveyId: survey.id }
+    return { state: stateForRequest(normalizeState(state), req), surveyId: survey.id }
   })
 }
 
@@ -1090,31 +1090,37 @@ const updateSurveyMutation = async (req, surveyId, body) => {
   return updateState((state) => {
     const survey = state.surveys.find((item) => item.id === surveyId)
     if (!survey) throw httpError(404, '问卷不存在。')
-    if ('title' in body) {
-      const title = String(body.title || '').trim()
-      if (!title) throw httpError(400, '请填写问卷标题。')
-      survey.title = title
+    if ('title' in body) survey.title = boundedText(body.title, '问卷标题', 120, { required: true })
+    if ('description' in body) survey.description = boundedText(body.description, '问卷描述', 2000) || '请选择你愿意参与的服务器方案。'
+    if ('guideText' in body) survey.guideText = boundedText(body.guideText, '问卷说明', 10000)
+    if ('status' in body) {
+      if (!['draft', 'open', 'closed'].includes(body.status)) throw httpError(400, '问卷状态无效。')
+      survey.status = body.status
     }
-    if ('description' in body) survey.description = String(body.description || '').trim() || '请选择你愿意参与的服务器方案。'
-    if ('guideText' in body) survey.guideText = String(body.guideText || '').trim()
-    if ('status' in body && ['draft', 'open', 'closed'].includes(body.status)) survey.status = body.status
     if ('startsAt' in body) survey.startsAt = normalizeDateInput(body.startsAt)
     if ('endsAt' in body) survey.endsAt = normalizeDateInput(body.endsAt)
     validateSurveyTimeWindow(survey.startsAt, survey.endsAt)
-    if ('voteMode' in body) survey.voteMode = body.voteMode === 'single' ? 'single' : 'multiple'
-    if ('maxVotes' in body) survey.maxVotes = Math.max(1, Number(body.maxVotes) || 1)
-    if ('resultVisibility' in body && ['always', 'after_vote', 'hidden'].includes(body.resultVisibility)) survey.resultVisibility = body.resultVisibility
+    if ('voteMode' in body) {
+      if (!['single', 'multiple'].includes(body.voteMode)) throw httpError(400, '投票模式无效。')
+      survey.voteMode = body.voteMode
+    }
+    if ('maxVotes' in body) survey.maxVotes = normalizeVoteLimit(body.maxVotes)
+    if ('resultVisibility' in body) {
+      if (!['always', 'after_vote', 'hidden'].includes(body.resultVisibility)) throw httpError(400, '结果可见性无效。')
+      survey.resultVisibility = body.resultVisibility
+    }
     if ('allowVoteEdits' in body) survey.allowVoteEdits = Boolean(body.allowVoteEdits)
     if ('requireLogin' in body) survey.requireLogin = Boolean(body.requireLogin)
     if ('candidateSubmission' in body) {
+      asRecord(body.candidateSubmission, '候选项投稿配置')
       survey.candidateSubmission = {
-        enabled: body.candidateSubmission?.enabled !== false,
-        requiresReview: body.candidateSubmission?.requiresReview !== false
+        enabled: body.candidateSubmission.enabled !== false,
+        requiresReview: body.candidateSubmission.requiresReview !== false
       }
     }
     survey.updatedAt = now()
     state.auditLogs.unshift({ id: createId('log'), action: 'survey.settings_saved', actor: admin.displayName, detail: `${admin.displayName} 保存了问卷「${survey.title}」的设置`, surveyId: survey.id, createdAt: survey.updatedAt })
-    return normalizeState(state)
+    return stateForRequest(normalizeState(state), req)
   })
 }
 
@@ -1125,10 +1131,19 @@ const updateSurveyFieldsMutation = async (req, surveyId, body) => {
     if (!survey) throw httpError(404, '问卷不存在。')
     const fields = normalizeCandidateFields(body.candidateFields)
     validateCandidateFields(fields)
+    const previousFieldsById = new Map((survey.candidateFields ?? []).map((field) => [field.id, field]))
+    for (const candidate of state.candidates.filter((item) => item.surveyId === survey.id)) {
+      for (const field of fields) {
+        const previousKey = previousFieldsById.get(field.id)?.key
+        if (previousKey && previousKey !== field.key && candidate.fields[field.key] === undefined) {
+          candidate.fields[field.key] = candidate.fields[previousKey] ?? ''
+        }
+      }
+    }
     survey.candidateFields = fields
     survey.updatedAt = now()
     state.auditLogs.unshift({ id: createId('log'), action: 'survey.fields_saved', actor: admin.displayName, detail: `${admin.displayName} 保存了问卷「${survey.title}」的投稿字段`, surveyId: survey.id, createdAt: survey.updatedAt })
-    return normalizeState(state)
+    return stateForRequest(normalizeState(state), req)
   })
 }
 
@@ -1137,13 +1152,16 @@ const deleteSurveyMutation = async (req, surveyId) => {
   return updateState((state) => {
     const survey = state.surveys.find((item) => item.id === surveyId)
     if (!survey) throw httpError(404, '问卷不存在。')
+    if (state.votes.some((vote) => vote.surveyId === surveyId)) {
+      throw httpError(409, '该问卷已有投票记录。为保留追责数据，请将问卷关闭，不能永久删除。')
+    }
     if (state.surveys.length <= 1) throw httpError(400, '至少需要保留一个问卷。')
     state.surveys = state.surveys.filter((item) => item.id !== surveyId)
     state.candidates = state.candidates.filter((item) => item.surveyId !== surveyId)
     state.votes = state.votes.filter((item) => item.surveyId !== surveyId)
     state.auditLogs = state.auditLogs.filter((item) => item.surveyId !== surveyId)
     state.auditLogs.unshift({ id: createId('log'), action: 'survey.deleted', actor: admin.displayName, detail: `${admin.displayName} 删除了问卷「${survey.title}」及其关联数据`, createdAt: now() })
-    return normalizeState(state)
+    return stateForRequest(normalizeState(state), req)
   })
 }
 
@@ -1152,7 +1170,7 @@ const createAdminCandidateMutation = async (req, body) => {
   return updateState((state) => {
     const survey = state.surveys.find((item) => item.id === body.surveyId)
     if (!survey) throw httpError(404, '问卷不存在。')
-    const values = cleanFieldValues(body.fields)
+    const values = cleanFieldValues(survey, body.fields)
     validateCandidateValues(survey, values)
     const title = titleFromValues(survey, values)
     if (state.candidates.find((item) => item.surveyId === survey.id && item.status !== 'rejected' && normalizeTitle(item.title) === normalizeTitle(title))) {
@@ -1173,7 +1191,7 @@ const createAdminCandidateMutation = async (req, body) => {
       reviewerName: admin.displayName
     })
     state.auditLogs.unshift({ id: createId('log'), action: 'candidate.admin_created', actor: admin.displayName, detail: `${admin.displayName} 添加了「${title}」作为「${survey.title}」的候选项`, surveyId: survey.id, createdAt: ts })
-    return normalizeState(state)
+    return stateForRequest(normalizeState(state), req)
   })
 }
 
@@ -1184,25 +1202,30 @@ const updateAdminCandidateMutation = async (req, candidateId, body) => {
     if (!candidate) throw httpError(404, '候选项不存在。')
     const survey = state.surveys.find((item) => item.id === candidate.surveyId)
     if (!survey) throw httpError(404, '候选项所属问卷不存在。')
-    if (body.fields) {
-      const values = cleanFieldValues(body.fields)
+    let changed = false
+    if ('fields' in body) {
+      const values = cleanFieldValues(survey, body.fields)
       validateCandidateValues(survey, values)
       const title = titleFromValues(survey, values, candidate.title)
       if (state.candidates.find((item) => item.id !== candidate.id && item.surveyId === candidate.surveyId && item.status !== 'rejected' && normalizeTitle(item.title) === normalizeTitle(title))) {
         throw httpError(400, '当前问卷已经存在同名候选项。')
       }
       candidate.title = title
-      candidate.fields = { ...candidate.fields, ...values }
+      candidate.fields = values
       state.auditLogs.unshift({ id: createId('log'), action: 'candidate.edited', actor: admin.displayName, detail: `${admin.displayName} 修改了候选项「${title}」`, surveyId: candidate.surveyId, createdAt: now() })
+      changed = true
     }
-    if (body.status && ['pending', 'approved', 'rejected'].includes(body.status)) {
+    if ('status' in body) {
+      if (!['pending', 'approved', 'rejected'].includes(body.status)) throw httpError(400, '候选项状态无效。')
       candidate.status = body.status
-      candidate.reviewNote = String(body.reviewNote ?? candidate.reviewNote ?? '')
+      candidate.reviewNote = boundedText(body.reviewNote ?? candidate.reviewNote, '审核备注', 1000)
+      candidate.reviewedAt = now()
+      candidate.reviewerName = admin.displayName
       state.auditLogs.unshift({ id: createId('log'), action: `candidate.${body.status}`, actor: admin.displayName, detail: `${admin.displayName} 将「${candidate.title}」标记为 ${body.status}`, surveyId: candidate.surveyId, createdAt: now() })
+      changed = true
     }
-    candidate.reviewedAt = now()
-    candidate.reviewerName = admin.displayName
-    return normalizeState(state)
+    if (!changed) throw httpError(400, '没有可保存的候选项变更。')
+    return stateForRequest(normalizeState(state), req)
   })
 }
 
@@ -1213,17 +1236,14 @@ const deleteAdminCandidateMutation = async (req, candidateId) => {
     if (!candidate) throw httpError(404, '候选项不存在。')
     const survey = state.surveys.find((item) => item.id === candidate.surveyId)
     if (!survey) throw httpError(404, '候选项所属问卷不存在。')
+    const isReferenced = state.votes.some((vote) =>
+      vote.surveyId === candidate.surveyId && (
+        (vote.candidateIds ?? []).includes(candidateId) ||
+        (vote.history ?? []).some((snapshot) => (snapshot.candidateIds ?? []).includes(candidateId))
+      )
+    )
+    if (isReferenced) throw httpError(409, '该候选项已有投票记录。为保留追责数据，请将其标记为“已拒绝”，不能永久删除。')
     state.candidates = state.candidates.filter((item) => item.id !== candidateId)
-    state.votes = state.votes
-      .map((vote) => ({
-        ...vote,
-        candidateIds: (Array.isArray(vote.candidateIds) ? vote.candidateIds : []).filter((id) => id !== candidateId),
-        history: (vote.history ?? []).map((item) => ({
-          ...item,
-          candidateIds: (Array.isArray(item.candidateIds) ? item.candidateIds : []).filter((id) => id !== candidateId)
-        }))
-      }))
-      .filter((vote) => vote.surveyId !== candidate.surveyId || vote.candidateIds.length > 0)
     state.auditLogs.unshift({
       id: createId('log'),
       action: 'candidate.deleted',
@@ -1232,7 +1252,7 @@ const deleteAdminCandidateMutation = async (req, candidateId) => {
       surveyId: candidate.surveyId,
       createdAt: now()
     })
-    return normalizeState(state)
+    return stateForRequest(normalizeState(state), req)
   })
 }
 
@@ -1241,29 +1261,40 @@ const reorderAdminCandidatesMutation = async (req, body) => {
   return updateState((state) => {
     const survey = state.surveys.find((item) => item.id === body.surveyId)
     if (!survey) throw httpError(404, '问卷不存在。')
-    const ids = Array.isArray(body.candidateIds) ? body.candidateIds.map(String) : []
-    if (ids.length === 0) throw httpError(400, '候选项排序不能为空。')
+    if (!Array.isArray(body.candidateIds)) throw httpError(400, '候选项排序格式不正确。')
+    const ids = body.candidateIds.map((id) => boundedText(id, '候选项 ID', 128, { required: true }))
     const surveyCandidates = state.candidates.filter((item) => item.surveyId === survey.id)
     const surveyCandidateIds = new Set(surveyCandidates.map((item) => item.id))
+    if (ids.length !== surveyCandidateIds.size || new Set(ids).size !== ids.length) {
+      throw httpError(400, '排序必须完整包含当前问卷的全部候选项，且不能重复。')
+    }
     if (ids.some((id) => !surveyCandidateIds.has(id))) throw httpError(400, '排序中包含不属于当前问卷的候选项。')
-    const orderedIds = [...ids, ...surveyCandidates.map((item) => item.id).filter((id) => !ids.includes(id))]
-    orderedIds.forEach((id, index) => {
+    ids.forEach((id, index) => {
       const candidate = state.candidates.find((item) => item.id === id)
       if (candidate) candidate.sortOrder = index * 1000
     })
     const ts = now()
     state.auditLogs.unshift({ id: createId('log'), action: 'candidate.reordered', actor: admin.displayName, detail: `${admin.displayName} 调整了问卷「${survey.title}」的候选项顺序`, surveyId: survey.id, createdAt: ts })
-    return normalizeState(state)
+    return stateForRequest(normalizeState(state), req)
   })
+}
+
+const applyCors = (req, res) => {
+  const origin = headerValue(req, 'origin')
+  if (origin && allowedOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Device-Id,X-XDUCraft-Proxy-Trace')
+  res.setHeader('Access-Control-Expose-Headers', 'X-XDUCraft-Api-Trace,X-XDUCraft-Proxy-Trace')
 }
 
 const sendJson = (res, statusCode, body) => {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id,X-XDUCraft-Proxy-Trace',
-    'Access-Control-Expose-Headers': 'X-XDUCraft-Api-Trace,X-XDUCraft-Proxy-Trace'
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff'
   })
   res.end(JSON.stringify(body))
 }
@@ -1271,10 +1302,7 @@ const sendJson = (res, statusCode, body) => {
 const sendText = (res, statusCode, body) => {
   res.writeHead(statusCode, {
     'Content-Type': 'text/plain; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Device-Id,X-XDUCraft-Proxy-Trace',
-    'Access-Control-Expose-Headers': 'X-XDUCraft-Api-Trace,X-XDUCraft-Proxy-Trace'
+    'X-Content-Type-Options': 'nosniff'
   })
   res.end(body)
 }
@@ -1316,10 +1344,11 @@ const contentTypes = new Map([
 
 const serveStatic = async (req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
-  const requestedPath = pathname === '/' ? '/index.html' : pathname
-  const filePath = path.normalize(path.join(distDir, requestedPath))
+  const requestedPath = pathname === '/' ? 'index.html' : pathname.replace(/^[/\\]+/, '')
+  const filePath = path.resolve(distDir, requestedPath)
+  const relativePath = path.relative(distDir, filePath)
 
-  if (!filePath.startsWith(distDir)) {
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     sendText(res, 403, 'Forbidden')
     return
   }
@@ -1341,6 +1370,14 @@ const serveStatic = async (req, res) => {
       sendText(res, 404, 'Build output not found. Run npm run build first, or use npm run dev for Vite.')
     }
   }
+}
+
+const enforceRateLimit = (req, res, scope, limit) => {
+  const result = rateLimit(`${scope}:${clientIpFromRequest(req)}`, limit)
+  if (result.allowed) return true
+  res.setHeader('Retry-After', String(result.retryAfterSeconds))
+  sendJson(res, 429, { error: '请求过于频繁，请稍后重试。' })
+  return false
 }
 
 const handleApi = async (req, res, pathname) => {
@@ -1383,7 +1420,12 @@ const handleApi = async (req, res, pathname) => {
       sendJson(res, 503, { error: 'XDUCraft 皮肤站登录未配置' })
       return
     }
+    if (!enforceRateLimit(req, res, 'oauth-login', 10)) return
     cleanupAuthMaps()
+    if (oauthStates.size >= 1000) {
+      sendJson(res, 503, { error: '登录请求暂时过多，请稍后重试。' })
+      return
+    }
     const url = new URL(req.url ?? '/', 'http://localhost')
     const state = createToken('oauth-state')
     const traceId = createTraceId()
@@ -1476,7 +1518,10 @@ const handleApi = async (req, res, pathname) => {
       }
       const user = mapBlessingUser(profile, traceId)
       const ticket = createToken('auth-ticket')
-      authTickets.set(ticket, { user, sessionToken: createSessionToken(user), expiresAt: Date.now() + authTicketTtlMs })
+      const { adminGrantKey: _adminGrantKey, ...clientUser } = user
+      if (authTickets.size >= 1000) cleanupAuthMaps()
+      if (authTickets.size >= 1000) throw new Error('待领取登录会话过多，请稍后重试')
+      authTickets.set(ticket, { user: clientUser, sessionToken: createSessionToken(user), expiresAt: Date.now() + authTicketTtlMs })
       writeAuthLog('oauth.callback.success', {
         traceId,
         role: user.role,
@@ -1512,35 +1557,38 @@ const handleApi = async (req, res, pathname) => {
     return
   }
 
+  if (!enforceRateLimit(req, res, 'api', 120)) return
   if (pathname === '/api/state' && req.method === 'GET') {
     sendJson(res, 200, stateForRequest(await loadState(), req))
     return
   }
 
   if (pathname === '/api/votes' && req.method === 'POST') {
-    sendJson(res, 200, await submitVoteMutation(req, await readJsonBody(req)))
+    if (!enforceRateLimit(req, res, 'vote', 30)) return
+    sendJson(res, 200, await submitVoteMutation(req, await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
   if (pathname === '/api/candidates' && req.method === 'POST') {
-    sendJson(res, 200, await submitCandidateMutation(req, await readJsonBody(req)))
+    if (!enforceRateLimit(req, res, 'candidate-submit', 10)) return
+    sendJson(res, 200, await submitCandidateMutation(req, await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
   if (pathname === '/api/admin/surveys' && req.method === 'POST') {
-    sendJson(res, 200, await createSurveyMutation(req, await readJsonBody(req)))
+    sendJson(res, 200, await createSurveyMutation(req, await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
   const surveyFieldsMatch = pathname.match(/^\/api\/admin\/surveys\/([^/]+)\/fields$/)
   if (surveyFieldsMatch && req.method === 'PUT') {
-    sendJson(res, 200, await updateSurveyFieldsMutation(req, decodeURIComponent(surveyFieldsMatch[1]), await readJsonBody(req)))
+    sendJson(res, 200, await updateSurveyFieldsMutation(req, decodeURIComponent(surveyFieldsMatch[1]), await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
   const surveyMatch = pathname.match(/^\/api\/admin\/surveys\/([^/]+)$/)
   if (surveyMatch && req.method === 'PATCH') {
-    sendJson(res, 200, await updateSurveyMutation(req, decodeURIComponent(surveyMatch[1]), await readJsonBody(req)))
+    sendJson(res, 200, await updateSurveyMutation(req, decodeURIComponent(surveyMatch[1]), await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
@@ -1550,18 +1598,18 @@ const handleApi = async (req, res, pathname) => {
   }
 
   if (pathname === '/api/admin/candidates' && req.method === 'POST') {
-    sendJson(res, 200, await createAdminCandidateMutation(req, await readJsonBody(req)))
+    sendJson(res, 200, await createAdminCandidateMutation(req, await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
   if (pathname === '/api/admin/candidates/reorder' && req.method === 'POST') {
-    sendJson(res, 200, await reorderAdminCandidatesMutation(req, await readJsonBody(req)))
+    sendJson(res, 200, await reorderAdminCandidatesMutation(req, await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
   const candidateMatch = pathname.match(/^\/api\/admin\/candidates\/([^/]+)$/)
   if (candidateMatch && req.method === 'PATCH') {
-    sendJson(res, 200, await updateAdminCandidateMutation(req, decodeURIComponent(candidateMatch[1]), await readJsonBody(req)))
+    sendJson(res, 200, await updateAdminCandidateMutation(req, decodeURIComponent(candidateMatch[1]), await readJsonBody(req, maxJsonBodyBytes)))
     return
   }
 
@@ -1582,6 +1630,9 @@ const server = createServer(async (req, res) => {
   const proxyTrace = headerValue(req, 'x-xducraft-proxy-trace')
   const traceId = proxyTrace || createTraceId()
   res.setHeader('x-xducraft-api-trace', traceId)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'same-origin')
+  if ((req.url ?? '').startsWith('/api/')) applyCors(req, res)
   const originalWriteHead = res.writeHead
   res.writeHead = function patchedWriteHead(statusCode, ...args) {
     statusForLog = Number(statusCode) || statusForLog
@@ -1604,7 +1655,8 @@ const server = createServer(async (req, res) => {
     if (res.headersSent) {
       res.destroy(error instanceof Error ? error : undefined)
     } else {
-      sendJson(res, status, { error: error instanceof Error ? error.message : 'Internal server error' })
+      const publicMessage = status >= 500 ? '服务器内部错误，请使用 traceId 联系管理员。' : error instanceof Error ? error.message : '请求失败'
+      sendJson(res, status, { error: publicMessage, traceId })
     }
   } finally {
     if (isApiRequest) {
@@ -1619,6 +1671,14 @@ const server = createServer(async (req, res) => {
     }
   }
 })
+server.requestTimeout = 30000
+server.headersTimeout = 15000
+server.keepAliveTimeout = 5000
+server.maxRequestsPerSocket = 1000
+server.on('error', (error) => {
+  console.error(`[server] ${error instanceof Error ? error.message : error}`)
+})
+
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`XDUCraft Survey API listening on http://localhost:${port}`)

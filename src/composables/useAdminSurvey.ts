@@ -215,6 +215,10 @@ export function useAdminSurvey() {
       message.warning('至少需要保留一个问卷。')
       return false
     }
+    if (appState.value.votes.some((vote) => vote.surveyId === surveyId)) {
+      message.warning('该问卷已有投票记录。请将其关闭以保留追责数据，不能永久删除。')
+      return false
+    }
     const nextSurveyId = appState.value.surveys.find((item) => item.id !== surveyId)?.id ?? ''
     try {
       applyRemoteState(await surveyApi.deleteSurvey(surveyId), nextSurveyId)

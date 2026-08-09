@@ -27,8 +27,8 @@ const fieldTypeOptions = [
 ]
 
 const openPreview = async () => {
-  if (surveySettingsDirty.value) await saveSurveySettings('问卷设置已保存')
-  if (fieldsDirty.value) await saveFieldDrafts('字段配置已保存')
+  if (surveySettingsDirty.value && !await saveSurveySettings('问卷设置已保存')) return
+  if (fieldsDirty.value && !await saveFieldDrafts('字段配置已保存')) return
   window.open(publicSurveyUrlFor(adminSurveyId.value), '_blank', 'noopener,noreferrer')
 }
 </script>

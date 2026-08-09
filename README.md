@@ -25,6 +25,8 @@ XDUCraft Survey 是给 XDUCraft 社区内部使用的问卷/投票系统，主�
 
 ## 本地开发
 
+需要 Node.js `^20.19.0` 或 `>=22.12.0`。
+
 安装依赖：
 
 ```bash
@@ -78,14 +80,16 @@ XDUCRAFT_PROXY_SECRET=和 Vercel 一致的随机长字符串
 
 说明：
 
-- `SESSION_SECRET` 必须在生产环境中设置为足够长的随机字符串。
+- 自建生产后端设置 `XDUCRAFT_ENV=production` 后，`SESSION_SECRET` 缺失、过短或仍为示例占位值时会拒绝启动。
+- `SESSION_SECRET` 和 `XDUCRAFT_PROXY_SECRET` 应分别使用至少 32 字符的随机字符串；不要直接使用示例值。
 - `BLESSING_REDIRECT_URI` 必须和皮肤站 OAuth 应用中填写的回调地址一致。
-- `BLESSING_ADMIN_IDS` 用英文逗号分隔，可填皮肤站返回的 uid、邮箱、昵称或游戏名。
+- `BLESSING_ADMIN_IDS` 用英文逗号分隔，可填皮肤站返回的 uid、邮箱、昵称或游戏名。移除白名单项后，相关管理员会话会立即失去后台访问权。
 - `XDUCRAFT_DATA_DIR` 指向后端数据目录，生产环境应定期备份。
+- `XDUCRAFT_MAX_JSON_BODY_BYTES`、`XDUCRAFT_LOG_MAX_BYTES` 和 `BLESSING_MAX_RESPONSE_BYTES` 可调整请求、日志和 OAuth 响应上限。
+- `XDUCRAFT_ALLOWED_ORIGINS` 可在 `FRONTEND_BASE_URL` 之外追加允许跨域访问的来源，多个值用英文逗号分隔。
 - `VITE_API_BASE_URL` 留空时，前端会请求同域名下的 `/api`。
 - `XDUCRAFT_UPSTREAM_API` 只给 Vercel `/api` 代理使用，指向真实后端地址。
-- `XDUCRAFT_PROXY_SECRET` 是可选的代理密钥。后端和 Vercel 填同一个值后，后端会拒绝绕过代理的 API 请求。
-- 皮肤站 OAuth 应用回调地址应填写前端域名下的 `/api/auth/blessing/callback`。
+- `XDUCRAFT_PROXY_SECRET` 在 Vercel 代理方案中为必填；自建完整服务可留空。
 
 ## 构建与运行
 
@@ -210,11 +214,15 @@ BLESSING_REDIRECT_URI=https://vote-api.example.com:8443/api/auth/blessing/callba
 data/app-state.json
 ```
 
+每次成功写入前，服务会把上一份有效状态保留为 `app-state.json.bak`。状态文件损坏或无法读取时，服务会停止写入并返回错误，不会再用空状态覆盖原数据。
+
 生产环境建议：
 
-- 定期备份 `data/` 目录。
+- 定期备份整个 `data/` 目录；`.bak` 只用于最近一次回退，不能替代异机备份。
 - 不要把 `.env`、`data/`、`dist/` 提交到 Git。
 - 迁移服务器前先停止服务，再复制数据文件。
+- 单选/多选切换和最大票数调整只影响新提交及用户主动修改，历史投票保持原样。
+- 已产生投票记录的候选项不能永久删除，可标记为“已拒绝”以保留追责记录。
 - 后续如问卷数量、投票数量明显增加，应迁移到数据库。
 
 ## 注意事项
@@ -268,8 +276,10 @@ Nginx Proxy Manager 侧重点看：
 ## 常用命令
 
 ```bash
-npm run dev       # 本地开发
-npm run api       # 只启动 API 服务
+npm run dev       # 本地开发：Vite + 本地 API
+npm run api       # 只启动自建 API 服务
+npm run check     # Vue / TypeScript 类型检查
+npm test          # 运行自动化测试
 npm run build     # 类型检查并构建前端
-npm run serve     # 生产模式运行
+npm run serve     # 运行自建生产服务
 ```

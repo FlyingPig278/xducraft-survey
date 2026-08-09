@@ -93,9 +93,16 @@ export interface AuditLog {
   createdAt: string
 }
 
+export interface SurveyResults {
+  totalVoters: number
+  totalSelections: number
+  counts: Record<string, number>
+}
+
 export interface AppState {
   surveys: SurveyDefinition[]
   candidates: Candidate[]
   votes: VoteRecord[]
   auditLogs: AuditLog[]
+  results: Record<string, SurveyResults>
 }
