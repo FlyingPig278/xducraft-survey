@@ -11,7 +11,10 @@ const hopByHopHeaders = new Set([
   'transfer-encoding',
   'upgrade',
   'host',
-  'content-length'
+  'content-length',
+  // fetch 会自动解压 gzip/br，转发解压后的 body 时必须去掉原压缩标记，
+  // 否则客户端按 content-encoding 解压明文会得到空响应。
+  'content-encoding'
 ])
 
 const upstreamBase = () => {
@@ -126,6 +129,8 @@ const buildHeaders = (req, traceId) => {
     headers.set(key, Array.isArray(value) ? value.join(', ') : String(value))
   })
 
+  // 显式要求上游返回原始字节，避免自动解压与 content-encoding 头不一致。
+  headers.set('accept-encoding', 'identity')
   headers.set('x-forwarded-host', String(req.headers['x-forwarded-host'] || req.headers.host || ''))
   headers.set('x-forwarded-proto', String(req.headers['x-forwarded-proto'] || 'https'))
   headers.set('x-xducraft-proxy-trace', traceId)
